@@ -14,7 +14,7 @@ import { TOTAL_CHECKS } from '@/lib/pillars.ts'
 const QA: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: 'Do I need an account?',
-    a: 'To scan, yes \u2014 but a free one: a code to your email, no password to create. Sharing the result asks nothing more, though. A finished report lives at a public URL where anyone can see the score, the pillar breakdown and every finding\u2019s title and severity without signing in. Reading the findings themselves is what the account opens: the worst few free, all of them on Pro, each with the evidence behind it and the fix.',
+    a: 'To scan, yes \u2014 but a free one: a code to your email, no password to create. Sharing the result asks nothing more, though. A finished report lives at a public URL where anyone can see the score, the pillar breakdown and every finding\u2019s title and severity without signing in. Reading the findings themselves is what the account opens: each finding with the evidence behind it and the fix prompt that closes it.',
   },
   {
     q: 'Will this attack my site?',
@@ -30,7 +30,7 @@ const QA: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: 'Is there a free plan?',
-    a: 'Yes. The free plan includes scans with all checks, the worst findings in full, and per-finding fix prompts. No credit card, no trial period \u2014 it stays free as long as you use it.',
+    a: 'Yes. While we run end-to-end testing the free plan runs every check, opens every finding in full, and serves the prompt that fixes them. No credit card, no trial period.',
   },
   {
     q: 'Can I run it in CI or from my editor?',

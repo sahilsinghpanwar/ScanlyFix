@@ -9,11 +9,10 @@
 import Link from 'next/link'
 import { allChecks } from '@scanlyfix/checks'
 import { ORDERED_PLANS, formatPrice, type Plan } from '@/lib/plans.ts'
-import { BillingButton } from '@/components/billing/billing-button.tsx'
 
 export const metadata = {
   title: 'Pricing',
-  description: 'Scan any site free with an account. Pro unlocks every finding and the prompt that fixes them.',
+  description: 'Every plan runs every check. Pro is for when you want to be paying for it.',
 }
 
 function features(plan: Plan): string[] {
@@ -60,13 +59,16 @@ export default function PricingPage() {
             </ul>
 
             <div className="mt-6">
-              {plan.id === 'pro' ? (
-                <BillingButton action="upgrade" label="Upgrade to Pro" />
-              ) : (
-                <Link href="/" className="text-sm link">
-                  Run a free scan
-                </Link>
-              )}
+              {/*
+               * TESTING MODE: free currently matches pro, so the upgrade
+               * button would offer nothing. The pro card keeps the call to
+               * action only if a Razorpay subscription is already in place —
+               * managed from the billing settings page, not the marketing
+               * pricing page.
+               */}
+              <Link href="/" className="text-sm link">
+                Run a free scan
+              </Link>
             </div>
           </section>
         ))}

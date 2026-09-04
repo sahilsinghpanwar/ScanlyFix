@@ -32,7 +32,7 @@ export function PlansPreview() {
         index={7}
         eyebrow="Pricing"
         title="Every plan runs every check"
-        lead={`All ${TOTAL_CHECKS} checks run on every scan, free or paid. What a plan changes is how much of the report comes back — never how carefully the site was measured.`}
+        lead={`All ${TOTAL_CHECKS} checks run on every scan, free or paid. Pro is on the menu — the free tier currently matches it while we run end-to-end testing.`}
       />
 
       <div className="mt-12 grid gap-px overflow-hidden border border-line bg-line sm:grid-cols-2">
@@ -61,24 +61,22 @@ export function PlansPreview() {
             </ul>
 
             <Link
-              href="/pricing"
+              href={plan.id === 'pro' ? '/settings/billing' : '/'}
               className={`mt-8 px-4 py-2.5 text-center text-[15px] font-medium transition-colors ${
  plan.id === 'pro'
                   ? 'bg-accent text-accent-ink hover:opacity-90'
                   : 'border border-line hover:bg-surface'
               }`}
             >
-              {plan.id === 'pro' ? 'See what Pro unlocks' : 'Start free'}
+              {plan.id === 'pro' ? 'Manage subscription' : 'Start free'}
             </Link>
           </div>
         ))}
       </div>
 
       <p className="mt-6 max-w-[62ch] text-[15px] leading-relaxed text-ink/70 text-pretty">
-        A scan needs a free account. The report it makes is public, though — the score, the pillar
-        breakdown and every finding’s title and severity show on a shareable URL without one. A free
-        account opens the worst few in full, and Pro opens them all — the evidence and the fix. You
-        always know exactly what you are missing rather than being asked to guess.
+        Every check runs on every plan. The free tier currently matches Pro on limits and reports —
+        this is a temporary testing state and the difference returns when Pro is back on sale.
       </p>
     </Section>
   )

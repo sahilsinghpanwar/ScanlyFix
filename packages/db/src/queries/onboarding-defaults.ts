@@ -96,16 +96,18 @@ export async function ensureDefaultMonitors(projectId: string): Promise<Monitor[
         enabled: DEFAULT_MONITOR_ENABLED[type],
         intervalS: DEFAULT_MONITOR_INTERVALS[type],
       })
-      .onConflictDoUpdate({
+      .onConflictDoNothing({
         target: [monitors.projectId, monitors.type],
-        // The conflict path is "this monitor already exists, leave it
-        // alone". We do NOT overwrite enabled or intervalS here — the
-        // owner may have customised them, and we never silently undo a
-        // user's setting during onboarding.
-        set: {},
       })
       .returning()
-    if (row) rows.push(row)
+    if (row) {
+      rows.push(row)
+    } else {
+      const existing = await db.query.monitors.findFirst({
+        where: and(eq(monitors.projectId, projectId), eq(monitors.type, type)),
+      })
+      if (existing) rows.push(existing)
+    }
   }
   return rows
 }

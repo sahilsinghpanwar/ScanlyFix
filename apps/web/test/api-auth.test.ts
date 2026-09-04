@@ -43,6 +43,16 @@ function entitlements(planId: 'free' | 'pro'): Entitlements {
   }
 }
 
+/**
+ * An entitlements shape with apiAccess explicitly turned off — used to pin the
+ * 403 branch even when the live plans table grants free tier API access, as it
+ * does in testing mode.
+ */
+function noApiEntitlements(): Entitlements {
+  const base = entitlements('free')
+  return { ...base, plan: { ...base.plan, apiAccess: false } }
+}
+
 function request(headers: Record<string, string> = {}): Request {
   return new Request('https://scanlyfix.test/api/v1/scan', { headers })
 }
@@ -135,7 +145,7 @@ describe('authenticateApiRequest', () => {
   })
 
   it('403s a genuine key whose plan does not include API access', async () => {
-    entitlementsFor.mockResolvedValue(entitlements('free'))
+    entitlementsFor.mockResolvedValue(noApiEntitlements())
 
     const auth = await authenticateApiRequest(request({ authorization: `Bearer ${KEY}` }))
 
@@ -150,7 +160,7 @@ describe('authenticateApiRequest', () => {
     const header = { authorization: `Bearer ${KEY}` }
     expect((await authenticateApiRequest(request(header))).ok).toBe(true)
 
-    entitlementsFor.mockResolvedValue(entitlements('free'))
+    entitlementsFor.mockResolvedValue(noApiEntitlements())
     expect((await authenticateApiRequest(request(header))).ok).toBe(false)
   })
 })

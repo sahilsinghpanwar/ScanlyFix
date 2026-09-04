@@ -254,20 +254,37 @@ export function useScanSubmit(options: ScanSubmitOptions): ScanSubmit {
         return false
       }
 
-      const { scanId } = (await response.json()) as { scanId: string }
+      const payload = (await response.json()) as { scanId: string; projectId?: string }
       /*
        * The scan runs in the background from here — the queue and the scanner
-       * workers own it. Both landings show progress and then the report on the
-       * dashboard: refresh re-renders the dashboard the form is already on (its
-       * latest-report section picks up the queued scan), push carries a scan
-       * started elsewhere to the same view. Pending is reset on the refresh
-       * path because the visitor is not leaving: a button stuck on "Scanning…"
-       * while the loader below is the thing doing the waiting would read as a
-       * second scan.
+       * workers own it. The destination is whichever surface is best for the
+       * follow-up:
+       *
+       *  - 'refresh' (dashboard scan form): the page re-renders in place so
+       *    the Sites row for the new project shows up and the latest-report
+       *    section picks up the queued scan. A push would lose the form's
+       *    in-progress state for somebody about to paste a second URL.
+       *
+       *  - project page (everything else): the API now returns the projectId
+       *    the scan was filed under, and the project page is the place where
+       *    scan progress, uptime, SSL, and the aggregate fix prompt all live
+       *    together. A re-paste of an already-watched URL is also a dedup hit
+       *    and lands here too — without that, returning visitors would be
+       *    bounced to the dashboard to look for a domain they already pinned.
+       *
+       *  - dashboard fallback: kept for the legacy / no-project case, which
+       *    should not happen on the paste flow any more but keeps the
+       *    navigation safe if the contract ever shifts.
+       *
+       * Pending is reset on the refresh path because the visitor is not
+       * leaving: a button stuck on "Scanning…" while the loader below is the
+       * thing doing the waiting would read as a second scan.
        */
       if (afterStart === 'refresh') {
         setPending(false)
         router.refresh()
+      } else if (payload.projectId) {
+        router.push(`/projects/${payload.projectId}`)
       } else {
         router.push('/dashboard')
       }

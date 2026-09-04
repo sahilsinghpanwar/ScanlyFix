@@ -2,13 +2,19 @@
 
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
-import { findRecentScanForUser } from '@scanlyfix/db'
+import {
+  createProjectWithMonitors,
+  findProjectByOwnerAndUrl,
+  findRecentScanForUserAcrossProjects,
+  getUserContext,
+} from '@scanlyfix/db'
 import { getViewer } from '@/lib/authz.ts'
 import { normalizeScanTarget } from '@/lib/url.ts'
 import { clientIpHash } from '@/lib/request.ts'
 import { checkApiScanAllowed, DEDUP_WINDOW_MS } from '@/lib/ratelimit.ts'
 import { checkScanQuota } from '@/lib/quota.ts'
 import { runScanJob } from '@/lib/scan/run-scan-job.ts'
+import { entitlementsFor } from '@/lib/entitlements.ts'
 
 /**
  * Starting a scan from a plain HTML form submission.
@@ -31,11 +37,19 @@ import { runScanJob } from '@/lib/scan/run-scan-job.ts'
  *
  * That route answers JSON to a caller that will read it. A form post has no
  * reader — the only thing it can do with an outcome is follow a redirect. So
- * this runs the same five steps in the same order and ends in `redirect()`
- * rather than a response body.
+ * this runs the same steps in the same order and ends in `redirect()` rather
+ * than a response body.
  *
  * `deep` is deliberately absent. The no-JavaScript path is the fallback, and a
  * deep scan is the one that needs a client polling for progress.
+ *
+ * ## Why this also creates a project
+ *
+ * URL paste = scan + monitoring. The hero form's promise is that pasting your
+ * domain starts watching it, not just scoring it once — so this action
+ * bootstraps the project + four default monitors in the same call. The scan
+ * is filed under that project id so the scan history and the dashboard's
+ * Domains list agree from row 0.
  */
 
 /** Where a rejected submission goes, with a sentence the page can render. */
@@ -53,7 +67,7 @@ export async function startScanAction(formData: FormData): Promise<void> {
   if (!target.ok) backToHero(target.reason)
 
   /*
-   * The product rule the hero is built on: a scan needs a free account, which
+   * The product rule the hero is built on: a scan needs an account, which
    * opens the worst findings (Pro opens them all). A signed-out visitor is sent
    * to sign in and comes back here.
    *
@@ -69,16 +83,56 @@ export async function startScanAction(formData: FormData): Promise<void> {
   // not back on the marketing page. (%2Fdashboard is "/dashboard" encoded.)
   if (viewer.kind !== 'user') redirect('/login?next=%2Fdashboard')
 
+  /*
+   * Ensure the project + monitors BEFORE the dedup lookup. See the matching
+   * block in app/api/scan/route.ts for the rationale — the short version is
+   * that the dedup-hit path also needs a projectId so a re-paste navigates
+   * to the domain the user is already watching, and that the quota check
+   * comes AFTER so somebody out of scans is told THAT.
+   */
+  let projectId: string
+  {
+    const existing = await findProjectByOwnerAndUrl(viewer.userId, target.url)
+    if (existing) {
+      projectId = existing.id
+    } else {
+      const context = await getUserContext(viewer.userId)
+      if (!context) backToHero('Account is not set up. Sign out and back in.')
+
+      const { plan } = await entitlementsFor(viewer)
+      const created = await createProjectWithMonitors(
+        viewer,
+        { name: target.hostname, url: target.url, orgId: context.orgId },
+        plan.projects,
+      )
+      if (!created.ok) {
+        if (created.reason === 'limit-reached') {
+          backToHero(
+            `The ${plan.name} plan includes ${plan.projects} ` +
+              `${plan.projects === 1 ? 'project' : 'projects'}. Upgrade to track more sites.`,
+          )
+        }
+        backToHero('Could not create the project for this site.')
+      }
+      projectId = created.project.id
+    }
+  }
+
   // Already answered recently by this account: reuse it rather than fetch the
-  // target twice. Keyed on the user, because scanning needs an account now and
-  // the scan we are looking for carries their id, not a null one.
-  const cached = await findRecentScanForUser(
+  // target twice. Spans scans filed under the user's projects AND ad-hoc
+  // scans, so a re-paste of a watched URL still hits the cache.
+  const cached = await findRecentScanForUserAcrossProjects(
     target.url,
     'fast',
     viewer.userId,
     new Date(Date.now() - DEDUP_WINDOW_MS),
   )
-  if (cached) redirect(`/scan/${cached.id}`)
+  if (cached) {
+    const destination = cached.projectId
+      ? `/projects/${cached.projectId}`
+      : `/projects/${projectId}`
+    redirect(destination)
+  }
 
   const quota = await checkScanQuota(viewer)
   if (!quota.ok) backToHero(quota.reason)
@@ -94,6 +148,7 @@ export async function startScanAction(formData: FormData): Promise<void> {
       url: target.url,
       profile: 'fast',
       anonIpHash,
+      projectId,
       requestedBy: viewer.userId,
     })
   } catch (error) {
@@ -103,5 +158,10 @@ export async function startScanAction(formData: FormData): Promise<void> {
     backToHero('Could not start the scan. Please try again in a moment.')
   }
 
-  redirect(`/scan/${scanId}`)
+  // Land on the project page: that is where the scan's loader and result will
+  // surface, and the place that opens uptime / domain / SSL in one click.
+  // Falls back to /scan/[id] only when no project was created (which would
+  // itself be a bug, since ensureProject ran above — but the redirect must
+  // never produce an undefined path).
+  redirect(`/projects/${projectId}`)
 }

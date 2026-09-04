@@ -6,6 +6,18 @@
  * promising something the code refuses to do — which arrives as a refund
  * request rather than a bug report.
  *
+ * ─── TESTING MODE ────────────────────────────────────────────────────────────
+ * The free tier is currently configured to match Pro on every field. This is a
+ * temporary state — every feature the paywall used to gate is now free so the
+ * team can exercise the full product end-to-end without first going through
+ * Razorpay. The structure below (separate `free` and `pro` records, separate
+ * display strings, a `fixPrompts` boolean that still gates the aggregate prompt
+ * server-side) is preserved intact so the previous behaviour is one revert
+ * away: restore the historic values in the `free` block below and everything
+ * else — the report, the dashboard, the API, the paywall — picks the change
+ * up automatically.
+ * ──────────────────────────────────────────────────────────────────────────────
+ *
  * The free tier is deliberately generous about the SCAN and strict about the
  * REPORT. A free report has to be genuinely useful or nobody shares it, and
  * visibly incomplete or nobody upgrades. Showing every finding's severity and
@@ -67,22 +79,34 @@ export interface Plan {
 }
 
 export const PLANS: Readonly<Record<PlanId, Plan>> = {
+  // TESTING MODE: every limit here is raised to match it. The previous values
+  // are kept commented below so they can be restored in one edit.
+  //   scansPerMonth:    30 → 500
+  //   projects:          1 → 25
+  //   monitors:          3 → 25
+  //   fullFindings:  false → true
+  //   fixPrompts:    false → true
+  //   history:       false → true
+  //   exports:       false → true
+  //   apiAccess:     false → true
+  //   apiKeys:           0 → 10
+  //   findingsShownInFull: 3 → Infinity
   free: {
     id: 'free',
     name: 'Free',
     priceMonthly: 0,
     currency: 'INR',
     planIdEnv: null,
-    scansPerMonth: 30,
-    projects: 1,
-    monitors: 3,
-    fullFindings: false,
-    fixPrompts: false,
-    history: false,
-    exports: false,
-    apiAccess: false,
-    apiKeys: 0,
-    findingsShownInFull: 3,
+    scansPerMonth: 500,
+    projects: 25,
+    monitors: 25,
+    fullFindings: true,
+    fixPrompts: true,
+    history: true,
+    exports: true,
+    apiAccess: true,
+    apiKeys: 10,
+    findingsShownInFull: Number.POSITIVE_INFINITY,
   },
   pro: {
     id: 'pro',

@@ -15,11 +15,12 @@
  *     matters more here than in a project using RLS.
  */
 
-import { and, count, desc, eq, gte, isNull, min } from 'drizzle-orm'
+import { and, count, desc, eq, gte, isNull, min, or } from 'drizzle-orm'
 import type { Finding, ScanScores } from '@scanlyfix/checks'
 import { db } from '../client.ts'
 import {
   findings,
+  projects,
   scans,
   type FindingRow,
   type Scan,
@@ -431,5 +432,62 @@ export async function findRecentScanForUser(
     )
     .orderBy(desc(scans.createdAt))
     .limit(1)
+  return row ?? null
+}
+
+/**
+ * The URL-paste flow's dedup, broadened to cover scans the user filed under
+ * one of their own projects.
+ *
+ * findRecentScanForUser above only matches `projectId IS NULL`, because that
+ * was the only scan a paste created. The scan path now bootstraps a project +
+ * four monitors alongside the scan (see app/api/scan/route.ts), so a re-paste
+ * lands on `scans` rows that DO have a projectId — and the dedup must include
+ * them, otherwise the second paste creates a second scan and burns a quota
+ * slot on a URL we just measured seconds ago.
+ *
+ * Auth is enforced through the project: a LEFT JOIN to projects filters by
+ * ownerId, so a scan filed under somebody else's project never matches — and
+ * cannot leak its id to a stranger guessing URLs.
+ *
+ * Returns the scan id AND the project id, because the dedup-hit path now has
+ * to navigate to the project page, not the scan page, to show the user the
+ * domain they're already watching.
+ */
+export async function findRecentScanForUserAcrossProjects(
+  url: string,
+  profile: ScanProfile,
+  userId: string,
+  since: Date,
+): Promise<{ id: string; projectId: string | null } | null> {
+  // Auth lives entirely in the WHERE clause so a single query does the
+  // dedup AND the ownership check. The two halves:
+  //
+  //   isNull(scans.projectId)                       — ad-hoc scan, no project
+  //                                                  to own, so the user is
+  //                                                  trusted by `requestedBy`.
+  //   eq(projects.ownerId, userId)                  — project-linked scan, only
+  //                                                  matched when THIS user
+  //                                                  owns the project.
+  //
+  // A scan filed under somebody else's project fails BOTH halves and is
+  // filtered out without a second round trip.
+  const [row] = await db
+    .select({ id: scans.id, projectId: scans.projectId })
+    .from(scans)
+    .leftJoin(projects, eq(scans.projectId, projects.id))
+    .where(
+      and(
+        eq(scans.url, url),
+        eq(scans.profile, profile),
+        eq(scans.status, 'done'),
+        eq(scans.requestedBy, userId),
+        gte(scans.createdAt, since),
+        or(isNull(scans.projectId), eq(projects.ownerId, userId)),
+      ),
+    )
+    .orderBy(desc(scans.createdAt))
+    .limit(1)
+
   return row ?? null
 }

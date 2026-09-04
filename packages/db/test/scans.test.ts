@@ -25,6 +25,7 @@ import {
   failScan,
   findRecentAnonymousScan,
   findRecentScanForUser,
+  findRecentScanForUserAcrossProjects,
   getScanForViewer,
   listRecentScansForUser,
   markScanRunning,
@@ -321,6 +322,46 @@ describe.skipIf(!live)('scan queries (SCANLYFIX_DB=1)', () => {
       await completeScan(id, done)
       expect(await findRecentScanForUser(url, 'fast', ownerId, recently())).toBeNull()
       expect((await findRecentScanForUser(url, 'deep', ownerId, recently()))?.id).toBe(id)
+    })
+  })
+
+  describe('URL-paste dedup (ad-hoc OR project-filed scans)', () => {
+    const recently = () => new Date(Date.now() - 600_000)
+    const done = { scores: SCORES, findings: [], contextMeta: META, checkErrors: [], durationMs: 1 }
+
+    it('reuses this account\'s recent ad-hoc scan of the same URL', async () => {
+      const url = `https://paste-adhoc-${randomUUID()}.test/`
+      const id = await track(open({ url, requestedBy: ownerId }))
+      await completeScan(id, done)
+      const hit = await findRecentScanForUserAcrossProjects(url, 'fast', ownerId, recently())
+      expect(hit?.id).toBe(id)
+      expect(hit?.projectId).toBeNull()
+    })
+
+    it('reuses this account\'s recent scan filed under their own project', async () => {
+      const url = `https://paste-proj-${randomUUID()}.test/`
+      const id = await track(open({ url, requestedBy: ownerId, projectId }))
+      await completeScan(id, done)
+      const hit = await findRecentScanForUserAcrossProjects(url, 'fast', ownerId, recently())
+      expect(hit?.id).toBe(id)
+      expect(hit?.projectId).toBe(projectId)
+    })
+
+    it('does not hand one account a scan filed under somebody else\'s project', async () => {
+      // The security boundary. The LEFT JOIN to projects filters by ownerId,
+      // so this stays null even though the URL is identical and recent.
+      const url = `https://paste-stranger-${randomUUID()}.test/`
+      const id = await track(open({ url, requestedBy: strangerId, projectId }))
+      await completeScan(id, done)
+      expect(await findRecentScanForUserAcrossProjects(url, 'fast', ownerId, recently())).toBeNull()
+    })
+
+    it('does not cross profiles even when filed under a project', async () => {
+      const url = `https://paste-cross-${randomUUID()}.test/`
+      const id = await track(open({ url, profile: 'deep', requestedBy: ownerId, projectId }))
+      await completeScan(id, done)
+      expect(await findRecentScanForUserAcrossProjects(url, 'fast', ownerId, recently())).toBeNull()
+      expect((await findRecentScanForUserAcrossProjects(url, 'deep', ownerId, recently()))?.id).toBe(id)
     })
   })
 

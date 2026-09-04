@@ -101,11 +101,19 @@ export function StartScanClient() {
         return
       }
 
-      const { scanId } = (await response.json()) as { scanId: string }
-      // The scan runs in the background; the dashboard is where its progress
-      // and then the report are shown, so the visitor lands there.
-      void scanId
-      router.replace('/dashboard')
+      const payload = (await response.json()) as { scanId: string; projectId?: string }
+      // The scan runs in the background; the project page is where its progress
+      // and then the report are shown, so the visitor lands there. Falls back
+      // to the dashboard only when the server omitted a projectId, which
+      // should not happen on this path (the API bootstraps the project
+      // alongside the scan) but keeps the navigation safe if the contract
+      // ever shifts.
+      void payload.scanId
+      if (payload.projectId) {
+        router.replace(`/projects/${payload.projectId}`)
+      } else {
+        router.replace('/dashboard')
+      }
       // Deliberately left pending: the route change is in flight, and
       // re-enabling the button would invite a second scan on the way out.
     } catch {

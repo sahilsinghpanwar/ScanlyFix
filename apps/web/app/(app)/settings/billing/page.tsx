@@ -75,18 +75,21 @@ export default async function BillingPage() {
           <dd className="tabular-nums">{plan.apiAccess ? plan.apiKeys : 'Not included'}</dd>
         </dl>
 
-        <div className="mt-6 flex flex-wrap gap-3">
-          {plan.id === 'free' ? (
-            <BillingButton action="upgrade" label="Upgrade to Pro" />
-          ) : (
-            subscription?.status !== 'cancelled' && (
+        {/*
+         * TESTING MODE: free currently matches pro on every field, so the
+         * "upgrade" button would offer nothing. Hidden until the limit split
+         * returns; the page itself is unchanged.
+         */}
+        {plan.id === 'pro' && (
+          <div className="mt-6 flex flex-wrap gap-3">
+            {subscription?.status !== 'cancelled' && (
               <BillingButton action="cancel" label="Cancel subscription" variant="secondary" />
-            )
-          )}
-          <Link href="/pricing" className="self-center text-sm link">
-            Compare plans
-          </Link>
-        </div>
+            )}
+            <Link href="/pricing" className="self-center text-sm link">
+              Compare plans
+            </Link>
+          </div>
+        )}
 
         {!serverEnv.billingConfigured && (
           <p className="mt-4 text-sm text-muted">

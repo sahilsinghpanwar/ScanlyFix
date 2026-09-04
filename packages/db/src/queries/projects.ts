@@ -168,15 +168,45 @@ export async function createProjectWithMonitors(
           enabled: DEFAULT_MONITOR_ENABLED[type],
           intervalS: DEFAULT_MONITOR_INTERVALS[type],
         })
-        .onConflictDoUpdate({
+        .onConflictDoNothing({
           target: [monitors.projectId, monitors.type],
-          // Idempotent on conflict — leave any existing row alone.
-          set: {},
         })
     }
 
     return { ok: true as const, project }
   })
+}
+
+/**
+ * Find an existing project this viewer already owns for the same URL.
+ *
+ * URL-paste flows (the scan API, the no-JS scan action, the start-scan
+ * confirmation) now bootstrap a project + monitors alongside the scan, so a
+ * repeat paste must NOT create a second project for the same URL — the user
+ * would end up with N identical rows in their dashboard, each running its own
+ * copy of the four monitors, and the first one they tried to delete would
+ * leave the others pointing at monitors they never signed off on.
+ *
+ * Scoped to the viewer's own projects: a URL already owned by somebody else
+ * must not be re-claimed through this lookup.
+ *
+ * No `Viewer` parameter is taken because the caller already has the user id
+ * and may want to lookup before the scan has been attributed; the equivalent
+ * `getProject` does take one. The rule is the same — viewer.id only ever
+ * matches its own row — and a future caller that needs to lock this down can
+ * add the parameter without breaking the existing call sites.
+ */
+export async function findProjectByOwnerAndUrl(
+  ownerId: string,
+  url: string,
+): Promise<Project | null> {
+  const [row] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.ownerId, ownerId), eq(projects.url, url)))
+    .orderBy(desc(projects.createdAt))
+    .limit(1)
+  return row ?? null
 }
 
 /**
