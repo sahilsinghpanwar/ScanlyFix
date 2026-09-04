@@ -183,18 +183,26 @@ export async function POST(request: Request) {
   // WHY same EVENTS.monitorDue for all types:
   // Inngest functions filter by `event.data.type` — same event, different probes
   // pick it up based on their `if:` condition. (Same as how sweep works.)
-  await inngest.send(
-    enabledMonitors.map((m) => ({
-      name: EVENTS.monitorDue,
-      data: {
-        monitorId: m.id,
-        type: m.type,
-        projectId: project.id,
-        url: projectUrl,
-        triggeredBy: 'deploy-hook' as TriggeredBy,
-      },
-    })),
-  )
+  try {
+    await inngest.send(
+      enabledMonitors.map((m) => ({
+        name: EVENTS.monitorDue,
+        data: {
+          monitorId: m.id,
+          type: m.type,
+          projectId: project.id,
+          url: projectUrl,
+          triggeredBy: 'deploy-hook' as TriggeredBy,
+        },
+      })),
+    )
+  } catch (error) {
+    console.error('[deploy-hook] Failed to emit Inngest events:', error)
+    return NextResponse.json(
+      { error: 'Background queue is unreachable. Please try again later.' },
+      { status: 500 },
+    )
+  }
 
   // ── 7. Response ───────────────────────────────────────────────────────────────
   return NextResponse.json({

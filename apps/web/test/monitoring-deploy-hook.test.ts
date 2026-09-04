@@ -219,5 +219,20 @@ describe('POST /api/monitors/deploy-hook', () => {
       const data = await res.json()
       expect(data.triggered).toBe(1)
     })
+
+    it('returns 500 when inngest.send fails', async () => {
+      findManyProjects.mockResolvedValue([{ id: 'proj-1', name: 'My Project', url: 'https://mysite.example.com' }])
+      findManyMonitors.mockResolvedValue([{ id: 'mon-1', type: 'uptime' }])
+      sendInngest.mockRejectedValue(new Error('fetch failed (ECONNREFUSED)'))
+
+      const req = makeRequest(
+        `https://app.test/api/monitors/deploy-hook?token=${SECRET}`,
+        { url: 'https://mysite.example.com' },
+      )
+      const res = await POST(req)
+      expect(res.status).toBe(500)
+      const data = await res.json()
+      expect(data.error).toMatch(/unreachable|unavailable/i)
+    })
   })
 })

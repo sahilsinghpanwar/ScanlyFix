@@ -14,7 +14,8 @@
     "test:e2e": "turbo run test:e2e",
     "typecheck": "turbo run typecheck",
     "razorpay:check": "node scripts/razorpay-preflight.mjs",
-    "db:deploy": "pnpm --filter @scanlyfix/db db:deploy"
+    "db:deploy": "pnpm --filter @scanlyfix/db db:deploy",
+    "inngest:dev": "pnpm --filter @scanlyfix/web inngest:dev"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",

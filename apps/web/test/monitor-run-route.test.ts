@@ -170,4 +170,25 @@ describe('POST /api/monitors/[id]/run', () => {
     const [payload] = firstCall as [unknown]
     expect((payload as { data: { type: string } }).data.type).toBe('domain')
   })
+
+  it('returns 500 when inngest.send fails (queue is down)', async () => {
+    mockViewer.mockResolvedValue(USER)
+    mockFindFirst.mockResolvedValue({
+      id: MONITOR_ID,
+      type: 'uptime',
+      enabled: true,
+      projectId: 'proj-1',
+    })
+    mockGetProject.mockResolvedValue({
+      id: 'proj-1',
+      url: 'https://example.com',
+      ownerId: USER.userId,
+    })
+    mockSendInngest.mockRejectedValue(new Error('fetch failed (ECONNREFUSED)'))
+
+    const res = await POST(new Request('https://app.test/api/monitors/x/run', { method: 'POST' }), ctx())
+    expect(res.status).toBe(500)
+    const body = await res.json()
+    expect(body.error).toMatch(/unreachable|unavailable/i)
+  })
 })

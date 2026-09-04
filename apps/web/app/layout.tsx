@@ -74,7 +74,7 @@ export const viewport: Viewport = {
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${mono.variable} ${sans.variable} ${sansFallback.variable}`}>
+    <html lang="en" suppressHydrationWarning className={`${mono.variable} ${sans.variable} ${sansFallback.variable}`}>
       <head>
         {/*
          * Runs synchronously before first paint, so the resolved theme class

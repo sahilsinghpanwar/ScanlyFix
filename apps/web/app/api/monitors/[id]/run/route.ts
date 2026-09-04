@@ -90,16 +90,29 @@ export async function POST(
   // there because deploy-hook triggers a batch of monitors and
   // disabled ones would surprise the user; here the user picked
   // the row themselves.)
-  await inngest.send({
-    name: EVENTS.monitorDue,
-    data: {
-      monitorId: monitor.id,
-      type: monitor.type,
-      projectId: project.id,
-      url: project.url,
-      triggeredBy: 'manual',
-    },
-  })
+  try {
+    await inngest.send({
+      name: EVENTS.monitorDue,
+      data: {
+        monitorId: monitor.id,
+        type: monitor.type,
+        projectId: project.id,
+        url: project.url,
+        triggeredBy: 'manual',
+      },
+    })
+  } catch (error) {
+    console.error(`[api/monitors/run] Failed to dispatch monitor ${monitor.id}:`, error)
+    return NextResponse.json(
+      {
+        error:
+          process.env.NODE_ENV !== 'production'
+            ? 'Background queue is unreachable. In development, please make sure Inngest Dev Server is running (`npx inngest-cli@latest dev`).'
+            : 'The background queue is currently unavailable. Please try again later.',
+      },
+      { status: 500 },
+    )
+  }
 
   return NextResponse.json({ ok: true, monitorId: monitor.id })
 }
