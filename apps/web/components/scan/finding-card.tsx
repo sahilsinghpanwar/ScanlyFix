@@ -13,6 +13,7 @@
 
 import type { Category, Severity } from '@scanlyfix/checks'
 import { CopyButton } from './copy-button.tsx'
+import { FixButton } from './fix-button.tsx'
 
 export interface FindingView {
   checkId: string
@@ -90,10 +91,18 @@ function Evidence({ evidence }: { evidence: Record<string, unknown> }) {
 export function FindingCard({
   finding,
   lockedNote = 'The detail and the fix for this finding are withheld.',
+  scanId,
 }: {
   finding: FindingView
   /** Why this one is closed. The card cannot know; the page can. */
   lockedNote?: string
+  /**
+   * The scan this finding belongs to. Present means the Fix button is live:
+   * pressing it has the model write the work order for this exact finding.
+   * Without it — a context with no scan to charge the fix to — the card keeps
+   * the engine's static prompt instead.
+   */
+  scanId?: string
 }) {
   const sev = SEVERITY[finding.severity]
 
@@ -124,36 +133,54 @@ export function FindingCard({
   }
 
   return (
-    <article className={`border border-line border-l-4 ${sev.stripe} p-5`}>
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span
-          className={`inline-flex items-center px-2 py-0.5 font-mono text-xs font-semibold uppercase tracking-wider ${sev.chip}`}
-        >
-          {finding.severity}
+    <details className={`group border border-line border-l-4 ${sev.stripe}`}>
+      <summary className="cursor-pointer list-none px-5 py-4 transition-colors hover:bg-surface/60 [&::-webkit-details-marker]:hidden">
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span
+            className={`inline-flex items-center px-2 py-0.5 font-mono text-xs font-semibold uppercase tracking-wider ${sev.chip}`}
+          >
+            {finding.severity}
+          </span>
+          <h3 className="min-w-0 flex-1 text-lg font-semibold text-balance">{finding.title}</h3>
+          <code className="hidden font-mono text-sm text-muted sm:block">{finding.checkId}</code>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className="shrink-0 text-muted transition-transform group-open:rotate-180"
+          >
+            <path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </span>
-        <h3 className="min-w-0 flex-1 text-lg font-semibold text-balance">{finding.title}</h3>
-      </header>
+      </summary>
 
-      <code className="mt-1.5 block font-mono text-sm text-muted">{finding.checkId}</code>
+      <div className="border-t border-line px-5 pb-5 pt-4">
+        <code className="block font-mono text-sm text-muted sm:hidden">{finding.checkId}</code>
 
-      {finding.description && (
-        <p className="mt-2 max-w-[75ch] text-[15px] leading-relaxed text-muted text-pretty">{finding.description}</p>
-      )}
+        {finding.description && (
+          <p className="mt-2 max-w-[75ch] text-[15px] leading-relaxed text-muted text-pretty">{finding.description}</p>
+        )}
 
-      {finding.evidence && <Evidence evidence={finding.evidence} />}
+        {finding.evidence && <Evidence evidence={finding.evidence} />}
 
-      {finding.remediation && (
-        <p className="mt-3 max-w-[75ch] text-[15px] leading-relaxed">
-          <span className="font-medium">Fix: </span>
-          {finding.remediation}
-        </p>
-      )}
+        {finding.remediation && (
+          <p className="mt-3 max-w-[75ch] text-[15px] leading-relaxed">
+            <span className="font-medium">Fix: </span>
+            {finding.remediation}
+          </p>
+        )}
 
-      {finding.fixPrompt && (
-        <div className="mt-3">
-          <CopyButton text={finding.fixPrompt} />
-        </div>
-      )}
-    </article>
+        {scanId ? (
+          <FixButton scanId={scanId} checkId={finding.checkId} />
+        ) : (
+          finding.fixPrompt && (
+            <div className="mt-3">
+              <CopyButton text={finding.fixPrompt} />
+            </div>
+          )
+        )}
+      </div>
+    </details>
   )
 }

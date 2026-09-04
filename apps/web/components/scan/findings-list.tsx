@@ -31,12 +31,15 @@ export function FindingsList({
   findings,
   priorities = null,
   lockedNote,
+  scanId,
 }: {
   findings: readonly FindingView[]
   /** Pillars this reader chose at onboarding; null when they never answered. */
   priorities?: readonly Category[] | null
   /** Passed straight through: only the page knows which gate applies. */
   lockedNote?: string
+  /** Passed straight through to every card: turns on the live Fix button. */
+  scanId?: string
 }) {
   const { chosen, rest } = splitPillars(priorities)
   const setAside = findings.filter((f) => rest.includes(f.category))
@@ -76,6 +79,7 @@ export function FindingsList({
                 key={`${finding.checkId}-${i}`}
                 finding={finding}
                 {...(lockedNote ? { lockedNote } : {})}
+                {...(scanId ? { scanId } : {})}
               />
             ))}
           </div>

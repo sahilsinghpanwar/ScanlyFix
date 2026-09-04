@@ -1,17 +1,20 @@
 /**
  * The console overview: what is wrong across every site this account watches.
  *
- * Redesigned to the ElevenLabs editorial design system: off-white canvas,
- * warm near-black ink, pill CTAs, soft-drop cards, atmospheric gradient orbs,
- * and Inter body at weight 400 with editorial letter-spacing. Display uses
- * light weight (300) for the magazine voice. Section labels use the
- * caption-uppercase token (12px / 600 / uppercase / 0.96px tracking).
+ * Redesigned to the Vercel console design system: a near-white canvas one step
+ * below pure-white cards, hairline #eaeaea borders, cards that carry their own
+ * header row inside a border-b, Geist body type with tabular figures for every
+ * count, and one chromatic colour — the blue accent — reserved for active
+ * meters and focus. Dark mode is class-driven (lib/theme.ts): the palette in
+ * globals.css inverts through the same tokens, so nothing here branches on the
+ * theme.
  */
 
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import {
   getDashboardSummary,
+  getScanForViewer,
   listProjectSummaries,
   listRecentScansForUser,
   type DashboardFinding,
@@ -22,7 +25,9 @@ import {
 import type { Category, Severity } from '@scanlyfix/checks'
 import { getViewer, requireUser } from '@/lib/authz.ts'
 import { ScanForm } from '@/components/scan/scan-form.tsx'
+import { LatestScanReport } from './latest-scan-report.tsx'
 import { NewProjectForm } from './new-project-form.tsx'
+import { ThemeToggle } from '@/components/console/theme-toggle.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 
 export const metadata = { title: 'Dashboard' }
@@ -101,6 +106,13 @@ export default async function DashboardPage() {
     listRecentScansForUser(viewer),
   ])
 
+  /*
+   * The newest ad-hoc scan, loaded with its findings, is what the live report
+   * section under the scan form renders — loader while it runs, report when it
+   * lands. Every new scan replaces it, which is what makes the section move.
+   */
+  const latestScan = recentScans[0] ? await getScanForViewer(recentScans[0].id, viewer) : null
+
   const scores = [
     ...projects.map((p) => p.latest?.scores?.overall),
     ...recentScans.map((s) => s.scores?.overall),
@@ -109,10 +121,12 @@ export default async function DashboardPage() {
 
   return (
     <div className="console flex min-h-dvh flex-col bg-c-bg text-c-ink">
-      <TopBar email={user.email} sites={projects.length} />
+      <TopBar email={user.email} />
 
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-12 px-6 py-10 sm:px-10 sm:py-14">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-6 py-8 sm:px-10">
         <ScanPanel />
+
+        <LatestScanReport scan={latestScan} viewer={viewer} />
 
         <div className="grid gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <IssueSummary summary={summary} />
@@ -142,39 +156,35 @@ export default async function DashboardPage() {
 /* Chrome                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function TopBar({ email, sites }: { email: string; sites: number }) {
+function TopBar({ email }: { email: string }) {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-c-line/60 bg-c-bg/80 backdrop-blur-md px-6 sm:px-10">
-      <div className="min-w-0 pl-12 lg:pl-0">
-        <p className="truncate text-[15px] font-medium text-c-ink">All sites</p>
-      </div>
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-c-line bg-c-bg/80 backdrop-blur-md px-4 sm:px-6">
+      <h1 className="min-w-0 truncate pl-12 text-sm font-semibold text-c-ink lg:pl-1">
+        Overview
+      </h1>
 
       <div className="flex-1" />
 
-      <Link
-        href="#sites"
-        aria-label="Find a site"
-        className="grid h-9 w-9 place-items-center rounded-full text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink"
-      >
-        <Icon name="search" />
-      </Link>
+      <ThemeToggle />
+
       <Link
         href="/pricing"
-        className="hidden h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink sm:flex"
+        className="hidden h-9 items-center gap-1.5 rounded-lg border border-c-line bg-c-card px-3.5
+                   text-[13px] font-medium text-c-ink transition-colors hover:bg-c-soft sm:flex"
       >
-        <Icon name="book" size={16} />
+        <Icon name="book" size={14} />
         Plans
       </Link>
       <Link
         href="/settings/billing"
         aria-label="Settings"
-        className="grid h-9 w-9 place-items-center rounded-full text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink"
+        className="grid h-9 w-9 place-items-center rounded-lg text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink"
       >
         <Icon name="settings" />
       </Link>
       <span
         title={email}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-c-ink text-[13px] font-medium text-c-brand-ink"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-c-brand text-[13px] font-medium text-c-brand-ink"
       >
         {email.slice(0, 1).toUpperCase()}
       </span>
@@ -186,6 +196,12 @@ function TopBar({ email, sites }: { email: string; sites: number }) {
 /* Cards                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The Vercel card: one border, one radius, and the header INSIDE the card,
+ * divided from the body by the same hairline the page draws everywhere else.
+ * An outer header above a bordered box needs two spacing decisions per card;
+ * this pattern needs none, which is why every console card can share it.
+ */
 function Card({
   title,
   action,
@@ -198,63 +214,57 @@ function Card({
   className?: string
 }) {
   return (
-    <section className={className}>
+    <section
+      className={`overflow-hidden rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${className}`}
+    >
       {(title || action) && (
-        <div className="mb-4 flex items-end justify-between gap-4">
-          {title && (
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
-              {title}
-            </h2>
-          )}
+        <header className="flex items-center justify-between gap-4 border-b border-c-line px-6 py-4">
+          {title && <h2 className="text-sm font-medium text-c-ink">{title}</h2>}
           {action}
-        </div>
+        </header>
       )}
-      <div className="rounded-xl border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-        {children}
-      </div>
+      {children}
     </section>
   )
 }
 
-function Badge({ children }: { children: React.ReactNode }) {
+/** The secondary action a card header gets: bordered, quiet, hover-lifted. */
+function CardAction({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <span className="rounded-full bg-c-soft px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-c-muted">
+    <Link
+      href={href}
+      className="rounded-md border border-c-line bg-c-card px-3 py-1.5 text-[12px] font-medium text-c-ink
+                 transition-colors hover:bg-c-soft"
+    >
       {children}
-    </span>
+    </Link>
   )
 }
 
 /* -------------------------------------------------------------------------- */
-/* Scan Panel — hero section with gradient orbs                                */
+/* Scan Panel                                                                 */
 /* -------------------------------------------------------------------------- */
 
 function ScanPanel() {
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-      <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-c-gradient-mint/30 blur-3xl" />
-      <div className="pointer-events-none absolute -left-16 top-8 h-56 w-56 rounded-full bg-c-gradient-peach/25 blur-3xl" />
-      <div className="pointer-events-none absolute bottom-0 left-1/3 h-40 w-40 rounded-full bg-c-gradient-lavender/20 blur-3xl" />
-
-      <div className="relative px-8 pt-10 pb-8 sm:px-10 sm:pt-12 sm:pb-10">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
+    <section className="rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      <div className="px-6 py-8 sm:px-8 sm:py-10">
+        <h2 className="text-2xl font-semibold tracking-tight text-c-ink">
           Scan a site
-        </p>
-        <h2 className="mt-3 text-[28px] font-light leading-tight tracking-[-0.02em] text-c-ink sm:text-[32px]">
-          Find what&apos;s wrong
         </h2>
-        <p className="mt-2 max-w-lg text-[15px] leading-relaxed text-c-body">
+        <p className="mt-2 max-w-lg text-sm leading-relaxed text-c-muted">
           {CHECKS_PER_SCAN} checks across security, SEO, AI answers, performance,
-          accessibility, and compliance.
+          accessibility, and compliance — each finding shows the evidence behind it.
         </p>
 
-        <div className="mt-8 max-w-2xl">
-          <ScanForm restore tone="console" />
+        <div className="mt-6 max-w-2xl">
+          <ScanForm restore stayAfterStart tone="console" />
         </div>
 
-        <ul className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-c-muted">
+        <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-c-muted">
           {PILLARS.map((pillar) => (
             <li key={pillar.key} className="flex items-center gap-1.5">
-              <span aria-hidden="true" className="h-1 w-1 rounded-full bg-c-ink/30" />
+              <span aria-hidden="true" className="h-1 w-1 rounded-full bg-c-line" />
               {pillar.label}
             </li>
           ))}
@@ -274,8 +284,8 @@ function IssueSummary({ summary }: { summary: DashboardSummary }) {
 
   return (
     <Card title="Issue summary">
-      <div className="p-8">
-        <div className="flex h-3 w-full overflow-hidden rounded-full bg-c-soft">
+      <div className="px-6 py-6">
+        <div className="flex h-2 w-full overflow-hidden rounded-full bg-c-soft">
           {openTotal === 0 ? (
             <span className="h-full w-full bg-c-line" />
           ) : (
@@ -289,12 +299,12 @@ function IssueSummary({ summary }: { summary: DashboardSummary }) {
           )}
         </div>
 
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
-          <p className="flex items-baseline gap-3">
-            <span className="console-num text-[40px] font-light leading-none tracking-tight text-c-ink">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
+          <p className="flex items-baseline gap-2.5">
+            <span className="console-num text-3xl font-semibold leading-none tracking-tight text-c-ink">
               {openTotal}
             </span>
-            <span className="text-[14px] text-c-muted">
+            <span className="text-[13px] text-c-muted">
               open {openTotal === 1 ? 'finding' : 'findings'}
             </span>
           </p>
@@ -313,7 +323,7 @@ function IssueSummary({ summary }: { summary: DashboardSummary }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 border-t border-c-line/60 sm:grid-cols-4">
+      <div className="grid grid-cols-2 border-t border-c-line sm:grid-cols-4">
         <MiniStat icon="feed" label="Open" value={summary.openTotal} hint="awaiting a fix" />
         <MiniStat icon="shield" label="Fixed" value={summary.fixed} hint="confirmed gone" divider />
         <MiniStat icon="bell" label="Ignored" value={summary.ignored} hint="muted by you" divider />
@@ -343,15 +353,15 @@ function MiniStat({
   divider?: boolean
 }) {
   return (
-    <div className={`px-8 py-5 ${divider ? 'sm:border-l sm:border-c-line/60' : ''}`}>
-      <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-c-muted">
+    <div className={`px-6 py-5 ${divider ? 'sm:border-l sm:border-c-line' : ''}`}>
+      <p className="flex items-center gap-2 text-[12px] font-medium text-c-muted">
         <Icon name={icon} size={14} />
         {label}
       </p>
-      <p className="console-num mt-2 text-[28px] font-light leading-none tracking-tight text-c-ink">
+      <p className="console-num mt-2 text-2xl font-semibold leading-none tracking-tight text-c-ink">
         {value}
       </p>
-      <p className="mt-1.5 text-[13px] text-c-muted">{hint}</p>
+      <p className="mt-1.5 text-[12px] text-c-muted">{hint}</p>
     </div>
   )
 }
@@ -363,25 +373,19 @@ function MiniStat({
 function MonitoringPanel({ sites }: { sites: number }) {
   return (
     <Card title="Monitoring">
-      <div className="relative flex min-h-[180px] flex-col items-center justify-center gap-3 p-8 text-center">
-        <div className="pointer-events-none absolute right-6 top-6 h-32 w-32 rounded-full bg-c-gradient-lavender/25 blur-2xl" />
-        <span className="relative grid h-12 w-12 place-items-center rounded-full bg-c-soft text-c-muted">
-          <Icon name="uptime" size={22} />
+      <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+        <span className="grid h-11 w-11 place-items-center rounded-lg border border-c-line bg-c-soft text-c-muted">
+          <Icon name="uptime" size={20} />
         </span>
-        <p className="relative text-[14px] text-c-muted text-pretty">
+        <p className="text-sm text-c-muted text-pretty">
           {sites === 0
             ? 'Nobody is watching a site yet.'
             : 'Scheduled re-scans and uptime checks are set per site.'}
         </p>
         {sites === 0 ? (
-          <p className="relative text-[13px] text-c-muted">Add a site below to start watching it.</p>
+          <p className="text-[13px] text-c-muted">Add a site below to start watching it.</p>
         ) : (
-          <Link
-            href="#sites"
-            className="relative rounded-full bg-c-ink px-5 py-2 text-[13px] font-medium text-c-brand-ink transition-opacity hover:opacity-90"
-          >
-            Set up monitoring
-          </Link>
+          <CardAction href="#sites">Set up monitoring</CardAction>
         )}
       </div>
     </Card>
@@ -397,29 +401,23 @@ function NeedsAttention({ findings, scanned }: { findings: DashboardFinding[]; s
     <Card
       title="Needs attention"
       action={
-        findings.length > 0 ? (
-          <Link
-            href="#sites"
-            className="rounded-full bg-c-ink px-4 py-1.5 text-[12px] font-medium text-c-brand-ink transition-opacity hover:opacity-90"
-          >
-            View all
-          </Link>
-        ) : null
+        findings.length > 0 ? <CardAction href="#sites">View all</CardAction> : null
       }
     >
       {findings.length === 0 ? (
-        <p className="p-8 text-center text-[14px] text-c-muted text-pretty">
+        <p className="px-6 py-8 text-center text-sm text-c-muted text-pretty">
           {scanned === 0
             ? 'Nothing scanned yet — run a scan above and the worst findings land here.'
             : 'No critical or high findings are open. That is the good outcome.'}
         </p>
       ) : (
-        <ul className="grid gap-4 p-6 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {findings.map((finding) => (
             <li key={finding.id}>
               <Link
                 href={`/scan/${finding.scanId}`}
-                className="flex h-full flex-col gap-2.5 rounded-xl border border-c-line/40 bg-c-bg p-5 transition-all hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
+                className="flex h-full flex-col gap-2 rounded-lg border border-c-line bg-c-card p-4
+                           transition-colors hover:bg-c-soft"
               >
                 <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em]">
                   <span className={SEVERITY_TEXT[finding.severity]}>{finding.severity}</span>
@@ -428,7 +426,7 @@ function NeedsAttention({ findings, scanned }: { findings: DashboardFinding[]; s
                     {finding.category === 'aeo' ? 'AI answers' : finding.category}
                   </span>
                 </p>
-                <p className="text-[15px] font-medium leading-snug text-pretty text-c-ink">
+                <p className="text-sm font-medium leading-snug text-pretty text-c-ink">
                   {finding.title}
                 </p>
                 <p className="mt-auto truncate text-[13px] text-c-muted">{finding.host}</p>
@@ -458,9 +456,6 @@ function AssetSummary({
 }) {
   return (
     <section>
-      <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
-        Asset summary
-      </h2>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <BigStat icon="globe" label="Domains" value={String(sites)} hint="tracked as projects" />
         <BigStat icon="search" label="Sites scanned" value={String(scanned)} hint="with a result" />
@@ -491,15 +486,17 @@ function BigStat({
   tone?: string
 }) {
   return (
-    <div className="rounded-xl border border-c-line/60 bg-c-card p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-      <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-c-muted">
+    <div className="rounded-lg border border-c-line bg-c-card p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      <p className="flex items-center gap-2 text-[12px] font-medium text-c-muted">
         <Icon name={icon} size={14} />
         {label}
       </p>
-      <p className={`console-num mt-3 text-[32px] font-light leading-none tracking-tight ${tone ?? 'text-c-ink'}`}>
+      <p
+        className={`console-num mt-3 text-2xl font-semibold leading-none tracking-tight ${tone ?? 'text-c-ink'}`}
+      >
         {value}
       </p>
-      <p className="mt-1.5 text-[13px] text-c-muted">{hint}</p>
+      <p className="mt-1.5 text-[12px] text-c-muted">{hint}</p>
     </div>
   )
 }
@@ -512,24 +509,22 @@ function IssueTypes({ summary }: { summary: DashboardSummary }) {
   const peak = Math.max(1, ...PILLARS.map((p) => summary.byCategory[p.key]))
 
   return (
-    <Card title="Issue types" action={<Badge>by pillar</Badge>}>
-      <ul className="flex flex-col gap-4 p-8">
+    <Card title="Issue types" action={<span className="text-[12px] text-c-muted">by pillar</span>}>
+      <ul className="flex flex-col gap-4 px-6 py-6">
         {PILLARS.map((pillar) => {
           const n = summary.byCategory[pillar.key]
           return (
             <li key={pillar.key} className="flex items-center gap-4">
-              <span className="w-28 shrink-0 text-[14px] font-medium text-c-body sm:w-36">
-                {pillar.label}
-              </span>
+              <span className="w-28 shrink-0 text-[13px] text-c-body sm:w-36">{pillar.label}</span>
               <span className="h-2 flex-1 overflow-hidden rounded-full bg-c-soft">
                 <span
                   className={`block h-full rounded-full transition-all duration-500 ${
-                    n > 0 ? 'bg-c-ink' : 'bg-transparent'
+                    n > 0 ? 'bg-c-accent' : 'bg-transparent'
                   }`}
                   style={{ width: `${(n / peak) * 100}%` }}
                 />
               </span>
-              <span className="console-num w-8 shrink-0 text-right text-[14px] font-medium text-c-ink">
+              <span className="console-num w-8 shrink-0 text-right text-[13px] font-medium text-c-ink">
                 {n}
               </span>
             </li>
@@ -547,25 +542,23 @@ function IssueTypes({ summary }: { summary: DashboardSummary }) {
 function Sites({ projects, orgId }: { projects: ProjectSummary[]; orgId: string }) {
   return (
     <section id="sites" className="scroll-mt-20">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
-          Domains
-        </h2>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+        <h2 className="text-sm font-medium text-c-ink">Domains</h2>
         <NewProjectForm orgId={orgId} />
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-xl border border-c-line/60 bg-c-card p-12 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-          <p className="text-[16px] font-medium text-c-ink">No domains tracked yet</p>
-          <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-c-muted text-pretty">
+        <div className="rounded-lg border border-c-line bg-c-card px-6 py-10 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <p className="text-sm font-medium text-c-ink">No domains tracked yet</p>
+          <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-c-muted text-pretty">
             Add a site to keep its history and watch its score move, or scan any URL above and file
             that report into a domain afterwards.
           </p>
         </div>
       ) : (
-        <ul className="overflow-hidden rounded-xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-          {projects.map((summary, index) => (
-            <ProjectRow key={summary.project.id} summary={summary} first={index === 0} />
+        <ul className="overflow-hidden rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          {projects.map((summary) => (
+            <ProjectRow key={summary.project.id} summary={summary} />
           ))}
         </ul>
       )}
@@ -573,22 +566,22 @@ function Sites({ projects, orgId }: { projects: ProjectSummary[]; orgId: string 
   )
 }
 
-function ProjectRow({ summary, first }: { summary: ProjectSummary; first: boolean }) {
+function ProjectRow({ summary }: { summary: ProjectSummary }) {
   const { project, latest, delta } = summary
   const score = latest?.scores?.overall ?? null
   const failed = latest?.status === 'failed'
 
   return (
-    <li className={first ? '' : 'border-t border-c-line/60'}>
+    <li className="[&:not(:first-child)]:border-t [&:not(:first-child)]:border-c-line">
       <Link
         href={`/projects/${project.id}`}
-        className="flex items-center gap-4 px-6 py-5 transition-colors hover:bg-c-soft/50"
+        className="flex items-center gap-4 px-6 py-4 transition-colors hover:bg-c-soft/60"
       >
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-c-soft text-c-muted">
-          <Icon name="globe" size={18} />
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-c-line bg-c-soft text-c-muted">
+          <Icon name="globe" size={16} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-medium text-c-ink">{project.name}</span>
+          <span className="block truncate text-sm font-medium text-c-ink">{project.name}</span>
           <span className="block truncate text-[13px] text-c-muted">{project.url}</span>
         </span>
         {score !== null ? (
@@ -596,7 +589,7 @@ function ProjectRow({ summary, first }: { summary: ProjectSummary; first: boolea
             <span className="hidden sm:inline">
               <DeltaTag delta={delta} />
             </span>
-            <span className={`console-num text-[24px] font-light tracking-tight ${scoreTone(score)}`}>
+            <span className={`console-num text-xl font-semibold tracking-tight ${scoreTone(score)}`}>
               {score}
             </span>
           </span>
@@ -629,18 +622,21 @@ function DeltaTag({ delta }: { delta: number | null }) {
 
 function RecentScans({ scans }: { scans: Scan[] }) {
   return (
-    <Card title="Recent scans" action={<Badge>not filed under a domain</Badge>}>
+    <Card title="Recent scans" action={<span className="text-[12px] text-c-muted">not filed under a domain</span>}>
       <ul>
-        {scans.map((scan, index) => {
+        {scans.map((scan) => {
           const score = scan.scores?.overall ?? null
           return (
-            <li key={scan.id} className={index === 0 ? '' : 'border-t border-c-line/60'}>
+            <li
+              key={scan.id}
+              className="[&:not(:first-child)]:border-t [&:not(:first-child)]:border-c-line"
+            >
               <Link
                 href={`/scan/${scan.id}`}
-                className="flex items-center gap-4 px-6 py-4 transition-colors hover:bg-c-soft/50"
+                className="flex items-center gap-4 px-6 py-3.5 transition-colors hover:bg-c-soft/60"
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px] font-medium text-c-ink">
+                  <span className="block truncate text-sm font-medium text-c-ink">
                     {hostOf(scan.url)}
                   </span>
                   <span className="console-num block truncate text-[12px] text-c-muted">
@@ -648,7 +644,9 @@ function RecentScans({ scans }: { scans: Scan[] }) {
                   </span>
                 </span>
                 {score !== null ? (
-                  <span className={`console-num text-[20px] font-light tracking-tight ${scoreTone(score)}`}>
+                  <span
+                    className={`console-num text-lg font-semibold tracking-tight ${scoreTone(score)}`}
+                  >
                     {score}
                   </span>
                 ) : (

@@ -21,6 +21,7 @@ const items = NAV.flatMap((section) => section.items)
 const REAL_ROUTES = new Set([
   '/dashboard',
   '/feed',
+  '/fixes',
   '/settings/billing',
   '/settings/api-keys',
   '/scan/start',

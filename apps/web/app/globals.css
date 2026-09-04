@@ -1,6 +1,14 @@
 @import 'tailwindcss';
 
 /*
+ * Dark mode is CLASS-driven, not media-driven: lib/theme.ts resolves the user's
+ * choice (light / dark / system) and puts `dark` or `light` on <html> before
+ * first paint. This variant is what makes every `dark:` utility in the app
+ * follow that choice instead of only the OS setting.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
  * Colour is defined once as raw custom properties and mapped into Tailwind's
  * theme by reference, so a utility like `bg-surface` resolves through the same
  * variable the media query rewrites. Adding a `dark:` variant to every element
@@ -75,8 +83,44 @@
   --glow: #2563eb1f;
 }
 
+/*
+ * Every dark palette in this file is applied by ONE of two selectors:
+ *
+ *   .dark                            — the class lib/theme.ts set from the
+ *                                      user's explicit choice (or from the
+ *                                      OS, resolved at first paint)
+ *   :root:not(.dark):not(.light)     — inside the media query: a visitor with
+ *                                      JS off gets the old OS-following
+ *                                      behaviour back
+ *
+ * The values are therefore written twice. That is plain CSS's only way to
+ * share a block; keep the pair in sync when touching a value.
+ */
+.dark {
+  --canvas: #0b0d10;
+  --surface: #14181d;
+  --ink: #e9edf2;
+  --muted: #949cab;
+  --line: #262d36;
+  --accent: #e9edf2;
+  --accent-ink: #0b0d10;
+  --danger: #ff9a8f;
+
+  --critical: #ff8a80;
+  --high: #ffa871;
+  --medium: #e3b341;
+  --low: #5ec8dc;
+  --info: #949cab;
+  --good: #4ade80;
+
+  --accent-soft: #e9edf20f;
+  --elevated: #191e25;
+  --grid: #e9edf20d;
+  --glow: #5b9dff2e;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.dark):not(.light) {
     --canvas: #0b0d10;
     --surface: #14181d;
     --ink: #e9edf2;
@@ -100,8 +144,21 @@
   }
 }
 
+/*
+ * Form controls, scrollbars and built-in UI follow the resolved theme, not
+ * just the painted colours: an <input> on a dark page must not render a white
+ * field because the OS says light.
+ */
 html {
   color-scheme: light dark;
+}
+
+html.light {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 /*
@@ -290,11 +347,17 @@ body {
  * than dark-on-light at the same value.
  */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.dark):not(.light) {
     --brand: #0b0d10;
     --hero-ink-rgb: 233 237 242;
     --hero-field-alpha: 0.17;
   }
+}
+
+.dark {
+  --brand: #0b0d10;
+  --hero-ink-rgb: 233 237 242;
+  --hero-field-alpha: 0.17;
 }
 
 /* Focus is black-on-brand inside the hero, where the accent blue would be
@@ -464,6 +527,8 @@ body {
   --color-c-side-active: var(--c-side-active);
   --color-c-brand: var(--c-brand);
   --color-c-brand-ink: var(--c-brand-ink);
+  /* The one chromatic colour in the console: links, active bars, focus. */
+  --color-c-accent: var(--c-accent);
 
   --color-c-gradient-mint: var(--c-gradient-mint);
   --color-c-gradient-peach: var(--c-gradient-peach);
@@ -477,23 +542,37 @@ body {
   --color-sev-low: var(--sev-low);
   --color-sev-info: var(--sev-info);
 
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans:
+    var(--font-geist-sans), var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
 }
 
+/*
+ * The console palette is Vercel's neutral system: a near-white canvas one step
+ * below pure-white cards, hairline #eaeaea borders, ink at #171717, and ONE
+ * chromatic colour — the blue (#0070f3) — reserved for links, active meters and
+ * focus rings. Severity keeps its own saturated scale; a severity colour has a
+ * job the accent must never do.
+ *
+ * Dark values follow the same Vercel ramp inverted: #0a0a0a canvas, #111 cards,
+ * #2e2e2e borders, #ededed ink. Applied by class first (the user's choice) and
+ * by the media query when no class has been set (JS off) — see the note above.
+ */
 :root {
-  --c-bg: #f5f5f5;
+  --c-bg: #fafafa;
   --c-card: #ffffff;
-  --c-line: #e7e5e4;
-  --c-ink: #0c0a09;
-  --c-body: #3f3f3f;
-  --c-muted: #5a5a5a;
-  --c-soft: #f0efed;
-  --c-side: #0c0a09;
-  --c-side-ink: #ffffff;
-  --c-side-dim: #a8a29e;
-  --c-side-active: #ffffff1f;
-  --c-brand: #292524;
+  --c-line: #eaeaea;
+  --c-ink: #171717;
+  --c-body: #525252;
+  --c-muted: #666666;
+  --c-soft: #f2f2f2;
+  --c-side: #fafafa;
+  --c-side-ink: #171717;
+  --c-side-dim: #666666;
+  --c-side-active: #ebebeb;
+  --c-brand: #171717;
   --c-brand-ink: #ffffff;
+  --c-accent: #0070f3;
 
   --c-gradient-mint: #a7e5d3;
   --c-gradient-peach: #f4c5a8;
@@ -508,21 +587,51 @@ body {
   --sev-info: #94a3b8;
 }
 
+.dark {
+  --c-bg: #0a0a0a;
+  --c-card: #111111;
+  --c-line: #2e2e2e;
+  --c-ink: #ededed;
+  --c-body: #a1a1a1;
+  --c-muted: #8f8f8f;
+  --c-soft: #1c1c1c;
+  --c-side: #0a0a0a;
+  --c-side-ink: #ededed;
+  --c-side-dim: #8f8f8f;
+  --c-side-active: #1f1f1f;
+  --c-brand: #ededed;
+  --c-brand-ink: #0a0a0a;
+  --c-accent: #3291ff;
+
+  --c-gradient-mint: #a7e5d3;
+  --c-gradient-peach: #f4c5a8;
+  --c-gradient-lavender: #c8b8e0;
+  --c-gradient-sky: #a8c8e8;
+  --c-gradient-rose: #e8b8c4;
+
+  --sev-critical: #fb7185;
+  --sev-high: #f87171;
+  --sev-medium: #fbbf24;
+  --sev-low: #60a5fa;
+  --sev-info: #94a3b8;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
-    --c-bg: #0c0a09;
-    --c-card: #1c1917;
-    --c-line: #292524;
-    --c-ink: #ffffff;
-    --c-body: #a8a29e;
-    --c-muted: #a8a29e;
-    --c-soft: #1c1917;
-    --c-side: #0c0a09;
-    --c-side-ink: #ffffff;
-    --c-side-dim: #a8a29e;
-    --c-side-active: #ffffff1a;
-    --c-brand: #e9edf2;
-    --c-brand-ink: #0c0a09;
+  :root:not(.dark):not(.light) {
+    --c-bg: #0a0a0a;
+    --c-card: #111111;
+    --c-line: #2e2e2e;
+    --c-ink: #ededed;
+    --c-body: #a1a1a1;
+    --c-muted: #8f8f8f;
+    --c-soft: #1c1c1c;
+    --c-side: #0a0a0a;
+    --c-side-ink: #ededed;
+    --c-side-dim: #8f8f8f;
+    --c-side-active: #1f1f1f;
+    --c-brand: #ededed;
+    --c-brand-ink: #0a0a0a;
+    --c-accent: #3291ff;
 
     --c-gradient-mint: #a7e5d3;
     --c-gradient-peach: #f4c5a8;

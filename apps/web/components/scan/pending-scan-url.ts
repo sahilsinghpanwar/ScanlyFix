@@ -87,6 +87,24 @@ export function takePendingUrl(store: KeyValueStore | null): string | null {
 }
 
 /**
+ * Read the remembered URL without clearing it.
+ *
+ * For a page that shows the address and asks before acting on it — the
+ * /scan/start confirmation. A refresh there must not lose the URL, so the
+ * stash survives the read; `takePendingUrl` is what consumes it, and only
+ * once the visitor has actually committed to the scan.
+ */
+export function peekPendingUrl(store: KeyValueStore | null): string | null {
+  if (!store) return null
+  try {
+    const url = store.getItem(PENDING_URL_KEY)
+    return url === null || url === '' ? null : url
+  } catch {
+    return null
+  }
+}
+
+/**
  * Whether this submit has to go through sign-in first.
  *
  * Unknown auth is treated as signed IN: the gate is a convenience that saves a

@@ -1,0 +1,17 @@
+{
+  "name": "@scanlyfix/fixes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-strip-types --env-file-if-exists=.env --watch src/index.ts",
+    "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

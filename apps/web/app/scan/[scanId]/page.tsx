@@ -180,6 +180,7 @@ export default async function ScanPage({ params }: { params: Promise<{ scanId: s
             <FindingsList
               findings={report.findings as FindingView[]}
               priorities={entitlements.priorities}
+              scanId={scan.id}
               lockedNote={
                 entitlements.signedIn
                   ? 'The detail and the fix for this finding are part of Pro.'

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PENDING_URL_KEY,
+  peekPendingUrl,
   shouldGateScan,
   stashPendingUrl,
   takePendingUrl,
@@ -87,6 +88,34 @@ describe('takePendingUrl', () => {
     const store = fakeStore()
     stashPendingUrl(store, 'https://scanlyfix.test/path?q=1')
     expect(takePendingUrl(store)).toBe('https://scanlyfix.test/path?q=1')
+  })
+})
+
+describe('peekPendingUrl', () => {
+  it('returns the URL without clearing it, so a refresh keeps the confirmation', () => {
+    const store = fakeStore({ [PENDING_URL_KEY]: 'https://example.com' })
+
+    expect(peekPendingUrl(store)).toBe('https://example.com')
+    expect(store.map.get(PENDING_URL_KEY)).toBe('https://example.com')
+    // The stash outlives the peek: only takePendingUrl consumes it.
+    expect(peekPendingUrl(store)).toBe('https://example.com')
+  })
+
+  it('returns null when nothing was stashed', () => {
+    expect(peekPendingUrl(fakeStore())).toBeNull()
+  })
+
+  it('returns null without a store', () => {
+    expect(peekPendingUrl(null)).toBeNull()
+  })
+
+  it('treats an empty stored value as nothing to confirm', () => {
+    const store = fakeStore({ [PENDING_URL_KEY]: '' })
+    expect(peekPendingUrl(store)).toBeNull()
+  })
+
+  it('returns null instead of throwing when the browser blocks storage', () => {
+    expect(peekPendingUrl(throwingStore())).toBeNull()
   })
 })
 

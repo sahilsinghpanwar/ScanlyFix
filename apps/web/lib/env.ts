@@ -139,6 +139,22 @@ export const serverEnv = {
   },
 
   /**
+   * Fix tier (apps/fixes). Turns one finding into the prompt that fixes it,
+   * written by a model. Gated exactly like the repo scanner: a deployment
+   * with no fix tier still works everywhere else, and the Fix button explains
+   * itself rather than throwing — see lib/fixes.ts.
+   */
+  get fixesUrl() {
+    return process.env.SCANLYFIX_FIXES_URL ?? ''
+  },
+  get fixesToken() {
+    return process.env.SCANLYFIX_FIXES_TOKEN ?? ''
+  },
+  get fixesConfigured() {
+    return Boolean(process.env.SCANLYFIX_FIXES_URL && process.env.SCANLYFIX_FIXES_TOKEN)
+  },
+
+  /**
    * GitHub App slug for the installation redirect. The full URL is
    * `https://github.com/apps/{slug}/installations/new`. When absent, the
    * Connect GitHub button on the feed page hides itself.

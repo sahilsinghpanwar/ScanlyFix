@@ -103,6 +103,25 @@ The UI shows a scan that never finishes, with no error anywhere.
 
 ---
 
+## 5b. Fixes — the AI fix-prompt tier
+
+`apps/fixes` turns one finding into the prompt that fixes it. It needs two
+secrets, both required — the process refuses to start without either:
+
+- `OPENROUTER_API_KEY` — held by THIS service only. The web app never sees it.
+- `SCANLYFIX_FIXES_TOKEN` — a shared secret you choose (`openssl rand -hex 24`),
+  given to the web app as `SCANLYFIX_FIXES_TOKEN` alongside
+  `SCANLYFIX_FIXES_URL` (the service's internal URL; default port 8082).
+
+`FIXES_MODEL` overrides the model — it defaults to `minimax/minimax-m3:free`
+on OpenRouter. Generation failures surface in the UI as a retry button, so a
+throttled free tier degrades to "press again", not to a broken feature.
+
+**Skipped:** every Fix button answers "fix prompts are not configured". Nothing
+else is affected.
+
+---
+
 ## 6. Razorpay
 
 Point the webhook at `https://<your domain>/api/webhooks/razorpay` and

@@ -33,11 +33,11 @@ const TONES = {
   console: {
     label: 'block text-[13px] font-medium text-c-muted',
     field:
-      'min-w-0 flex-1 rounded-xl border border-c-line bg-c-card px-5 py-3 text-[15px] text-c-ink ' +
+      'min-w-0 flex-1 rounded-lg border border-c-line bg-c-card px-4 py-2.5 text-[15px] text-c-ink ' +
       'placeholder:text-c-muted focus-visible:outline-2 focus-visible:outline-offset-1 ' +
-      'focus-visible:outline-c-ink disabled:opacity-60',
+      'focus-visible:outline-c-accent disabled:opacity-60',
     button:
-      'rounded-full bg-c-ink px-7 py-3 text-[14px] font-medium text-c-brand-ink ' +
+      'rounded-lg bg-c-brand px-6 py-2.5 text-[14px] font-medium text-c-brand-ink ' +
       'transition-opacity hover:opacity-90 disabled:opacity-60 sm:w-auto',
     error: 'mt-2 min-h-5 text-[13px] text-sev-high',
   },
@@ -46,7 +46,18 @@ const TONES = {
 export function ScanForm({
   restore = false,
   tone = 'terminal',
-}: { restore?: boolean; tone?: keyof typeof TONES } = {}) {
+  stayAfterStart = false,
+}: {
+  restore?: boolean
+  tone?: keyof typeof TONES
+  /**
+   * True on the dashboard: when the scan is accepted, re-render the page in
+   * place so its latest-report section shows the loader and then the result.
+   * False (default) navigates to the dashboard, so a scan started on the
+   * landing page or the confirmation page shows its progress there too.
+   */
+  stayAfterStart?: boolean
+} = {}) {
   const skin = TONES[tone]
   const inputId = useId()
   const errorId = useId()
@@ -55,6 +66,7 @@ export function ScanForm({
   const { value, setValue, pending, error, submit } = useScanSubmit({
     restore,
     inputRef,
+    afterStart: stayAfterStart ? 'refresh' : 'dashboard',
     authState: { isAuthenticated: session.data?.session?.user != null, isLoading: session.isLoading },
   })
 

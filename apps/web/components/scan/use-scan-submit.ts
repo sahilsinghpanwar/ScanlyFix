@@ -55,19 +55,22 @@ import {
 
 /**
  * Where a signed-out visitor lands after signing in from a scan attempt: the
- * app, not the marketing page they started on. The URL they typed rides along
- * in sessionStorage and the dashboard's scan form reclaims it, so the scan they
- * came to run is one keypress away. Sending them back to the landing page — the
- * old behaviour — read as "I signed in and nothing happened".
+ * /scan/start confirmation, which shows the URL they typed and asks before
+ * starting. The URL rides along in sessionStorage, so the page can display it
+ * verbatim and the visitor starts the scan with one keypress — after seeing
+ * the one warning that matters: the report is locked to that address. The
+ * dashboard remains the fallback for a visitor with nothing pending.
  */
-const SIGN_IN_NEXT = '/dashboard'
+const SIGN_IN_NEXT = '/scan/start'
 
 export interface ScanSubmitOptions {
   /**
    * Whether this form should pick up a URL left behind by a sign-in trip.
    *
-   * The dashboard opts in — a scan-gated sign-in lands there now (SIGN_IN_NEXT),
-   * and its form is the one the visitor sees. The hero opts in too, as a
+   * A scan-gated sign-in lands on /scan/start (SIGN_IN_NEXT), which shows and
+   * confirms the URL. The dashboard opts in as the fallback — reached when the
+   * visitor leaves the confirmation via "Scan a different site", so the box is
+   * waiting for them filled rather than blank. The hero opts in too, as a
    * fallback; the final CTA does not. Every form stashes on the way out
    * regardless — `restore` only controls which one reads it back, and
    * takePendingUrl is read-once, so two opted-in forms on different routes
@@ -76,6 +79,18 @@ export interface ScanSubmitOptions {
   restore?: boolean
   /** Focused after a restore, so the visitor can just press Enter. */
   inputRef?: RefObject<HTMLInputElement | null>
+  /**
+   * Where the visitor is when the scan has been accepted. The scan itself runs
+   * in the background either way — the queue and the scanner workers own it —
+   * so this only decides which surface shows the loader and then the report.
+   *
+   * 'refresh'  the form is already on the dashboard; re-render it in place and
+   *            the latest-report section picks up the queued scan.
+   * 'dashboard' (default) navigate to the dashboard, so a scan started from the
+   *            landing page or the confirmation page also shows its progress
+   *            and result there rather than on a separate report route.
+   */
+  afterStart?: 'refresh' | 'dashboard'
   /**
    * The Supabase auth state, supplied by the calling component via
    * `useSession()` from the relevant Supabase provider. Inlined rather
@@ -100,7 +115,12 @@ export interface ScanSubmit {
 }
 
 export function useScanSubmit(options: ScanSubmitOptions): ScanSubmit {
-  const { restore = false, inputRef, authState } = options
+  const {
+    restore = false,
+    inputRef,
+    afterStart = 'dashboard',
+    authState,
+  } = options
   const router = useRouter()
   const { isAuthenticated, isLoading: isSessionLoading } = authState
   const [value, setValueState] = useState('')
@@ -235,9 +255,22 @@ export function useScanSubmit(options: ScanSubmitOptions): ScanSubmit {
       }
 
       const { scanId } = (await response.json()) as { scanId: string }
-      router.push(`/scan/${scanId}`)
-      // Deliberately left pending: the route change is in flight, and
-      // re-enabling the button would invite a second scan on the way out.
+      /*
+       * The scan runs in the background from here — the queue and the scanner
+       * workers own it. Both landings show progress and then the report on the
+       * dashboard: refresh re-renders the dashboard the form is already on (its
+       * latest-report section picks up the queued scan), push carries a scan
+       * started elsewhere to the same view. Pending is reset on the refresh
+       * path because the visitor is not leaving: a button stuck on "Scanning…"
+       * while the loader below is the thing doing the waiting would read as a
+       * second scan.
+       */
+      if (afterStart === 'refresh') {
+        setPending(false)
+        router.refresh()
+      } else {
+        router.push('/dashboard')
+      }
       return true
     } catch {
       setError('Could not reach the scanner. Check your connection and try again.')

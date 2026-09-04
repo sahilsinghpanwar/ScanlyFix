@@ -53,5 +53,6 @@ CLAUDE.md
 CODEBUDDY.md
 GEMINI.md
 QODER.md
+SUPERBASE_SETUP.md
 # Generated instructions, not workflows — .github/workflows stays committable.
 .github/instructions/

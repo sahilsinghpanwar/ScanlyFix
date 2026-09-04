@@ -41,7 +41,7 @@ export const NAV: readonly NavSection[] = [
     items: [
       { label: 'Dashboard', icon: 'home', href: '/dashboard' },
       { label: 'Feed', icon: 'feed', href: '/feed' },
-      { label: 'AutoFix', icon: 'wrench', soon: true },
+      { label: 'AutoFix', icon: 'wrench', href: '/fixes' },
     ],
   },
   {
