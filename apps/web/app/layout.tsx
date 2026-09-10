@@ -25,8 +25,15 @@ const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', dis
 const sans = Geist({ subsets: ['latin'], variable: '--font-geist-sans', display: 'swap' })
 const sansFallback = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+  'http://localhost:3000'
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000'),
+  metadataBase: new URL(siteUrl),
   title: {
     default: 'ScanlyFix — everything wrong with your website, and the prompt that fixes it',
     template: '%s · ScanlyFix',

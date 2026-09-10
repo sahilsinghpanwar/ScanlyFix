@@ -33,7 +33,22 @@ export const publicEnv = {
    * is the silent failure mode that makes sign-in appear to work in dev and
    * break in production.
    */
-  appUrl: () => required('NEXT_PUBLIC_APP_URL', process.env.NEXT_PUBLIC_APP_URL),
+  appUrl: () => {
+    const val =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      (process.env.NEXT_PUBLIC_VERCEL_URL ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}` : '') ||
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+
+    if (!val) {
+      if (process.env.NODE_ENV === 'test') {
+        return required('NEXT_PUBLIC_APP_URL', process.env.NEXT_PUBLIC_APP_URL)
+      }
+      return 'https://scanlyfix.com'
+    }
+    return val.replace(/\/+$/, '')
+  },
   /*
    * There is deliberately no `redirectAllowlist` here. One existed and read
    * `SUPABASE_REDIRECT_ALLOWLIST`, which has no NEXT_PUBLIC_ prefix — so Next

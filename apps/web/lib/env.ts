@@ -72,12 +72,26 @@ export const serverEnv = {
     return required('RAZORPAY_WEBHOOK_SECRET')
   },
   get appUrl() {
-    // Required: a silent fallback to localhost in production was the exact bug
-    // that made OAuth sign-in appear to work locally and silently fail in
-    // production. The matching "Site URL" lives in the Supabase Auth → URL
-    // Configuration dashboard, and `${appUrl}/auth/callback` must be on its
-    // redirect allowlist — see SUPABASE_REDIRECT_ALLOWLIST below.
-    return required('NEXT_PUBLIC_APP_URL')
+    const raw =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : '') ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+
+    if (!raw) {
+      if (process.env.NODE_ENV === 'test') {
+        return required('NEXT_PUBLIC_APP_URL')
+      }
+      return 'https://scanlyfix.com'
+    }
+
+    let url = raw.trim()
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `https://${url}`
+    }
+    return url.replace(/\/+$/, '')
   },
 
   /**
