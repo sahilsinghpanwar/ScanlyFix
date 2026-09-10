@@ -16,7 +16,9 @@
     "paths": {
       "@/*": ["./*"],
       "@scanlyfix/checks": ["../../packages/checks/src/index.ts"],
-      "@scanlyfix/db": ["../../packages/db/src/index.ts"]
+      "@scanlyfix/db": ["../../packages/db/src/index.ts"],
+      "@scanlyfix/runtime-sdk": ["../../packages/runtime-sdk/src/index.ts"],
+      "@darvin/runtime-sdk": ["../../packages/runtime-sdk/src/index.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

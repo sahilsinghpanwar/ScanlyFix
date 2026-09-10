@@ -178,8 +178,7 @@ export const AlertConfigSchema = z.object({
   /**
    * Number of consecutive failed probes required before an alert is sent.
    *
-   * Defaults to 2 in the probe code. Anything between 1 and 5 is allowed; the
-   * uptime settings UI exposes 1, 2, 3, and 5 as a segmented group.
+   * Defaults to 2 in the probe code. Anything between 1 and 5 is allowed.
    *
    * WHY a number and not a boolean: a single failure is often a deploy blip,
    * and a product that emails on every transient outage teaches people to
@@ -187,12 +186,10 @@ export const AlertConfigSchema = z.object({
    * mode for teams that prefer to triage in their own tooling first.
    */
   failuresBeforeAlert: z
-    .union([
-      z.literal(1),
-      z.literal(2),
-      z.literal(3),
-      z.literal(5),
-    ])
+    .number()
+    .int()
+    .min(1)
+    .max(5)
     .optional(),
 
   /**

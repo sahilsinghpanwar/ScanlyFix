@@ -265,6 +265,7 @@ export const projects = pgTable(
     logoUrl: text('logo_url'),
     brandColor: text('brand_color'),
     robotsIndexable: boolean('robots_indexable').notNull().default(true),
+    runtimeSpendCeilingMicroUsd: bigint('runtime_spend_ceiling_micro_usd', { mode: 'number' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('projects_owner_idx').on(t.ownerId), index('projects_org_idx').on(t.orgId)],
@@ -1183,6 +1184,46 @@ export const runtimeRouteStats = pgTable(
 
 
 
+/* -------------------------------------------------------------------------- */
+/* Runtime AI Logs & Spend                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Raw telemetry events recorded from AI provider calls (OpenAI, Anthropic, etc.).
+ * Zero-proxy policy: secret keys never leave the caller's server; only metadata
+ * (model, tokens, latency, cost) is ingested.
+ */
+export const runtimeAiCalls = pgTable(
+  'runtime_ai_calls',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    promptTokens: integer('prompt_tokens').notNull().default(0),
+    completionTokens: integer('completion_tokens').notNull().default(0),
+    latencyMs: integer('latency_ms').notNull().default(0),
+    costMicroUsd: bigint('cost_micro_usd', { mode: 'number' }).notNull().default(0),
+    userHash: text('user_hash'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('runtime_ai_calls_project_created_idx').on(t.projectId, t.createdAt)],
+);
+
+/** Velocity-alert hourly dedupe — unique(project, hour) = ek hour, ek email. */
+export const runtimeSpendAlerts = pgTable(
+  'runtime_spend_alerts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    spentMicroUsd: bigint('spent_micro_usd', { mode: 'number' }).notNull(),
+    projectedMicroUsd: bigint('projected_micro_usd', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('runtime_spend_alerts_uq').on(t.projectId, t.hour)],
+);
+
 
 
 /* -------------------------------------------------------------------------- */
@@ -1218,6 +1259,8 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   alerts: many(alerts),
   alertChannels: many(alertChannels),
   statusSubscribers: many(statusSubscribers),
+  aiCalls: many(runtimeAiCalls),
+  spendAlerts: many(runtimeSpendAlerts),
 }))
 
 export const scansRelations = relations(scans, ({ one, many }) => ({
@@ -1357,6 +1400,20 @@ export const webVitalsSnapshotsRelations = relations(webVitalsSnapshots, ({ one 
   }),
 }))
 
+export const runtimeAiCallsRelations = relations(runtimeAiCalls, ({ one }) => ({
+  project: one(projects, {
+    fields: [runtimeAiCalls.projectId],
+    references: [projects.id],
+  }),
+}))
+
+export const runtimeSpendAlertsRelations = relations(runtimeSpendAlerts, ({ one }) => ({
+  project: one(projects, {
+    fields: [runtimeSpendAlerts.projectId],
+    references: [projects.id],
+  }),
+}))
+
 /* -------------------------------------------------------------------------- */
 /* Inferred row types — import these instead of hand-writing DTOs.            */
 /* -------------------------------------------------------------------------- */
@@ -1408,7 +1465,6 @@ export type IncidentUpdate = typeof incidentUpdates.$inferSelect
 export type NewIncidentUpdate = typeof incidentUpdates.$inferInsert
 export type StatusSubscriber = typeof statusSubscribers.$inferSelect
 export type NewStatusSubscriber = typeof statusSubscribers.$inferInsert
-export const MaintenanceWindow = typeof maintenanceWindows.$inferSelect
 export type MaintenanceWindow = typeof maintenanceWindows.$inferSelect
 export type NewMaintenanceWindow = typeof maintenanceWindows.$inferInsert
 export type DnsSnapshot = typeof dnsSnapshots.$inferSelect
@@ -1417,4 +1473,9 @@ export type WebVitalsSnapshot = typeof webVitalsSnapshots.$inferSelect
 export type NewWebVitalsSnapshot = typeof webVitalsSnapshots.$inferInsert
 export type SnoozedMonitor = typeof snoozedMonitors.$inferSelect
 export type NewSnoozedMonitor = typeof snoozedMonitors.$inferInsert
+export type RuntimeAiCall = typeof runtimeAiCalls.$inferSelect
+export type NewRuntimeAiCall = typeof runtimeAiCalls.$inferInsert
+export type RuntimeSpendAlert = typeof runtimeSpendAlerts.$inferSelect
+export type NewRuntimeSpendAlert = typeof runtimeSpendAlerts.$inferInsert
+
  

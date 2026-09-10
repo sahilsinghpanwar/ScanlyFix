@@ -83,7 +83,10 @@ export function withGuard<TReq extends NextRequestLike = NextRequestLike, TRes =
           },
           options,
         );
-        if (event) runtime.report(event);
+        if (event) {
+          runtime.report(event);
+          void runtime.flush(); // ⭐ YE LINE WAPAS ADD KARO — middleware short-lived hota hai
+        }
       }
     } catch {
       // Guard never causes user requests to fail

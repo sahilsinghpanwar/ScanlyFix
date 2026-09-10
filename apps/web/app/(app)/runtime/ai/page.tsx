@@ -1,17 +1,24 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { listGuardRoutes, listProjects } from '@scanlyfix/db';
+import {
+  getCurrentHourSpendMicroUsd,
+  listRecentAiCalls,
+  getSpendBreakdown,
+  getSpendCeilingMicroUsd,
+  getSpendLast24hMicroUsd,
+  listProjects,
+} from '@scanlyfix/db';
 
-import { GuardRoutesTable, GuardSetupCard, type GuardRouteView } from '@/components/runtime/guard-routes.tsx';
+import { AiConsole } from '@/components/runtime/ai-console.tsx';
 import { getViewer } from '@/lib/authz.ts';
 import { hasRuntimeAccess } from '@/lib/entitlements.ts';
-import { computeNeedsSession } from '@/lib/runtime/guard/heuristic.ts';
+import { buildAiSummary, projectEndOfHourMicroUsd } from '@/lib/runtime/ai-log/summary.ts';
 import { PageHeader } from '@/components/console/page-header.tsx';
 import { Icon } from '@/components/console/icons.tsx';
 
-export const metadata = { title: 'Runtime Guard — ScanlyFix' };
+export const metadata = { title: 'Runtime AI Spend & Log — ScanlyFix' };
 
-export default async function GuardPage({
+export default async function AiConsolePage({
   searchParams,
 }: {
   searchParams?: Promise<{ projectId?: string }>;
@@ -26,12 +33,12 @@ export default async function GuardPage({
   if (!activeProject) {
     return (
       <div className="console min-h-dvh bg-c-bg text-c-ink">
-        <PageHeader title="Runtime — Guard" />
+        <PageHeader title="Runtime — AI Spend & Log" />
         <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-8 sm:px-10">
           <div className="rounded-xl border border-c-line bg-c-card p-10 text-center shadow-sm">
             <h2 className="text-lg font-semibold text-c-ink">No projects under watch</h2>
             <p className="mx-auto mt-2 max-w-md text-sm text-c-muted">
-              Add a project from the dashboard to start observing routes and server actions with Guard.
+              Add a project from the dashboard to start observing AI spend and token telemetry.
             </p>
             <Link
               href="/dashboard#sites"
@@ -52,12 +59,14 @@ export default async function GuardPage({
   if (!hasAccess) {
     return (
       <div className="console min-h-dvh bg-c-bg text-c-ink">
-        <PageHeader title="Runtime — Guard" />
+        <PageHeader title="Runtime — AI Spend & Log" />
         <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-8 sm:px-10">
-          <ProjectSelector projects={projects} activeProjectId={projectId} />
+          {projects.length > 1 && (
+            <ProjectSelector projects={projects} activeProjectId={projectId} />
+          )}
           <GateCard
-            title="Guard is a Pro feature"
-            body="Runtime Guard records which routes and server actions are actually exposed by your application, allowing nightly probers to test real protected endpoints instead of guesswork."
+            title="AI Call Log & Spend is a Pro feature"
+            body="A zero-proxy wrapper that attaches to your AI client — your API key stays in your process, requests go directly to providers, and ScanlyFix receives only metadata (model, tokens, latency). Spend is calculated to alert on runaway loops before high bills arrive."
             cta={{ label: 'Upgrade to Pro', href: '/settings/billing' }}
           />
         </div>
@@ -65,16 +74,19 @@ export default async function GuardPage({
     );
   }
 
-  const routes = await listGuardRoutes(projectId);
+  const [calls, breakdown, hourSpend, last24h, ceilingMicro] = await Promise.all([
+    listRecentAiCalls(projectId),
+    getSpendBreakdown(projectId),
+    getCurrentHourSpendMicroUsd(projectId),
+    getSpendLast24hMicroUsd(projectId),
+    getSpendCeilingMicroUsd(projectId),
+  ]);
 
-  const view: GuardRouteView[] = routes.map((r) => ({
-    ...r,
-    needsSession: computeNeedsSession(r.withSession, r.withoutSession),
-  }));
+  const summary = buildAiSummary({ calls, byModel: breakdown.byModel, byUser: breakdown.byUser });
 
   return (
     <div className="console min-h-dvh bg-c-bg text-c-ink">
-      <PageHeader title="Runtime — Guard" />
+      <PageHeader title="Runtime — AI Spend & Log" />
 
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-6 py-8 sm:px-10">
         {projects.length > 1 && (
@@ -89,15 +101,15 @@ export default async function GuardPage({
           >
             Auth Prober
           </Link>
-          <span className="rounded-lg bg-c-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm">
-            Guard Routes
-          </span>
           <Link
-            href={`/runtime/ai?projectId=${projectId}`}
+            href={`/runtime/guard?projectId=${projectId}`}
             className="rounded-lg px-3 py-1.5 text-xs font-medium text-c-muted transition-colors hover:text-c-ink"
           >
-            AI Spend &amp; Logs
+            Guard Routes
           </Link>
+          <span className="rounded-lg bg-c-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm">
+            AI Spend &amp; Logs
+          </span>
         </div>
 
         {/* Feature Header */}
@@ -111,18 +123,22 @@ export default async function GuardPage({
                 <h2 className="text-base font-semibold text-c-ink">{activeProject.name}</h2>
               </div>
               <p className="mt-1 text-sm text-c-muted">
-                Observed from inside your application — captures real routes and server actions.
-                Endpoints classified as needing a session are automatically fed to the nightly Auth Prober.
+                Client wrapper — proxy nahi. Key aapki process me, request seedha provider ko,
+                humein sirf metadata. Spend usi calls se price hota hai — wahi numbers jo log dikhata hai.
               </p>
             </div>
           </div>
         </div>
 
-        {view.length === 0 ? (
-          <GuardSetupCard projectId={projectId} />
-        ) : (
-          <GuardRoutesTable projectId={projectId} routes={view} />
-        )}
+        <AiConsole
+          projectId={projectId}
+          summary={summary}
+          hourSpendMicroUsd={hourSpend}
+          projectedHourMicroUsd={projectEndOfHourMicroUsd(hourSpend)}
+          last24hMicroUsd={last24h}
+          ceilingMicroUsd={ceilingMicro}
+          calls={calls}
+        />
       </div>
     </div>
   );
@@ -132,7 +148,7 @@ function ProjectSelector({
   projects,
   activeProjectId,
 }: {
-  projects: Array<{ id: string; name: string; url: string }>;
+  projects: Array<{ id: string; name: string }>;
   activeProjectId: string;
 }) {
   return (
@@ -143,7 +159,7 @@ function ProjectSelector({
         return (
           <Link
             key={p.id}
-            href={`/runtime/guard?projectId=${p.id}`}
+            href={`/runtime/ai?projectId=${p.id}`}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
               isActive
                 ? 'bg-c-accent text-white shadow-sm'

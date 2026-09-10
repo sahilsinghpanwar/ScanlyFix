@@ -17,6 +17,7 @@ import { webVitalsProbe } from './functions/web-vitals-probe.ts'
 import { rollupWorker } from './functions/rollup-worker.ts'
 import { autoResolveStaleIncidents } from './functions/auto-resolve-stale-incidents.ts'
 import { runtimeAuthProber } from './functions/runtime-auth-prober.ts'
+import { runtimeSpendWatch } from './functions/runtime-spend-watch.ts'
 
 export const functions = [
   sweepMonitors,
@@ -30,4 +31,5 @@ export const functions = [
   rollupWorker,
   autoResolveStaleIncidents,
   runtimeAuthProber,
+  runtimeSpendWatch,
 ]
