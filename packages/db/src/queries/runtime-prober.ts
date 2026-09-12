@@ -18,6 +18,9 @@ export type RuntimeProjectContext = {
   /** Host only, e.g. "app.example.com" — scheme nahi, path nahi. */
   hostname: string;
   isVerified: boolean;
+  anonKeyEncrypted?: string | null;
+  anonKeyFingerprint?: string | null;
+  anonKeyCheckedAt?: Date | null;
 };
 
 export async function getRuntimeProjectContext(projectId: string): Promise<RuntimeProjectContext | null> {
@@ -26,6 +29,9 @@ export async function getRuntimeProjectContext(projectId: string): Promise<Runti
       id: projects.id,
       url: projects.url,        // ADAPT: project ka domain column
       verifiedAt: projects.verifiedAt, // ADAPT: verification column
+      anonKeyEncrypted: projects.anonKeyEncrypted,
+      anonKeyFingerprint: projects.anonKeyFingerprint,
+      anonKeyCheckedAt: projects.anonKeyCheckedAt,
     })
     .from(projects)
     .where(eq(projects.id, projectId))
@@ -37,7 +43,45 @@ export async function getRuntimeProjectContext(projectId: string): Promise<Runti
     id: row.id,
     hostname: safeHostname(row.url),
     isVerified: row.verifiedAt !== null || isDev,
+    anonKeyEncrypted: row.anonKeyEncrypted,
+    anonKeyFingerprint: row.anonKeyFingerprint,
+    anonKeyCheckedAt: row.anonKeyCheckedAt,
   };
+}
+
+export async function getProjectAnonKey(projectId: string): Promise<{
+  anonKeyEncrypted: string | null;
+  anonKeyFingerprint: string | null;
+  anonKeyCheckedAt: Date | null;
+} | null> {
+  const [row] = await db
+    .select({
+      anonKeyEncrypted: projects.anonKeyEncrypted,
+      anonKeyFingerprint: projects.anonKeyFingerprint,
+      anonKeyCheckedAt: projects.anonKeyCheckedAt,
+    })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function updateProjectAnonKey(
+  projectId: string,
+  data: {
+    anonKeyEncrypted: string | null;
+    anonKeyFingerprint: string | null;
+    anonKeyCheckedAt: Date;
+  },
+): Promise<void> {
+  await db
+    .update(projects)
+    .set({
+      anonKeyEncrypted: data.anonKeyEncrypted,
+      anonKeyFingerprint: data.anonKeyFingerprint,
+      anonKeyCheckedAt: data.anonKeyCheckedAt,
+    })
+    .where(eq(projects.id, projectId));
 }
 
 function safeHostname(raw: string): string {
@@ -66,19 +110,56 @@ export async function listProberTargets(projectId: string) {
     .orderBy(runtimeProberTargets.path);
 }
 
+export async function getProberTarget(
+  projectId: string,
+  path: string,
+  method: string = 'GET',
+) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const [row] = await db
+    .select()
+    .from(runtimeProberTargets)
+    .where(
+      and(
+        eq(runtimeProberTargets.projectId, projectId),
+        eq(runtimeProberTargets.path, normalizedPath),
+        eq(runtimeProberTargets.method, method.toUpperCase()),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function countManualProberTargets(projectId: string): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(runtimeProberTargets)
+    .where(
+      and(
+        eq(runtimeProberTargets.projectId, projectId),
+        eq(runtimeProberTargets.source, 'manual'),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
 export async function addProberTarget(
   projectId: string,
   path: string,
   method: string = 'GET',
   source: 'default' | 'guard' | 'manual' = 'manual',
 ) {
+  const upperMethod = method.toUpperCase();
+  if (upperMethod !== 'GET') {
+    throw new Error(`Only GET method is supported for prober targets (received ${upperMethod})`);
+  }
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const [row] = await db
     .insert(runtimeProberTargets)
     .values({
       projectId,
       path: normalizedPath,
-      method: method.toUpperCase(),
+      method: upperMethod,
       source,
     })
     .onConflictDoUpdate({
@@ -98,10 +179,11 @@ export async function deleteProberTarget(projectId: string, targetId: string): P
 }
 
 export async function seedProberTargets(projectId: string, targets: NewProberTarget[]): Promise<void> {
-  if (targets.length === 0) return;
+  const getTargets = targets.filter((t) => (t.method || 'GET').toUpperCase() === 'GET');
+  if (getTargets.length === 0) return;
   await db
     .insert(runtimeProberTargets)
-    .values(targets.map((t) => ({ projectId, ...t })))
+    .values(getTargets.map((t) => ({ projectId, ...t, method: 'GET' })))
     .onConflictDoNothing(); // re-run safe — duplicate seed kuch nahi bigadega
 }
 
@@ -121,7 +203,17 @@ export async function recordCheck(targetId: string, status: number): Promise<voi
 
 // ── Findings ─────────────────────────────────────────────────
 
-export async function findUnresolvedFinding(projectId: string, path: string, method: string) {
+export async function findUnresolvedFinding(
+  projectId: string,
+  path: string,
+  method: string,
+  variant?: 'anon_role' | null,
+) {
+  const variantCondition =
+    variant === 'anon_role'
+      ? eq(runtimeProberFindings.variant, 'anon_role')
+      : isNull(runtimeProberFindings.variant);
+
   const [row] = await db
     .select()
     .from(runtimeProberFindings)
@@ -131,6 +223,7 @@ export async function findUnresolvedFinding(projectId: string, path: string, met
         eq(runtimeProberFindings.path, path),
         eq(runtimeProberFindings.method, method),
         isNull(runtimeProberFindings.resolvedAt),
+        variantCondition,
       ),
     )
     .limit(1);
@@ -145,6 +238,8 @@ export async function insertFinding(input: {
   baselineStatus: number;
   actualStatus: number;
   severity: 'critical' | 'high';
+  variant?: 'anon_role' | null;
+  keyFingerprint?: string | null;
 }) {
   const [row] = await db.insert(runtimeProberFindings).values(input).returning();
   return row;

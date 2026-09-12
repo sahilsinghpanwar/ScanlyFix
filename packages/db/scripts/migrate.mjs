@@ -65,16 +65,27 @@ async function main() {
   const pool = new Pool({ connectionString, max: 1 })
   const db = drizzle(pool)
 
+  let lockAcquired = false
   try {
-    // Blocks until whichever instance got here first has finished.
-    await db.execute(sql`select pg_advisory_lock(${LOCK_KEY})`)
+    try {
+      // Blocks until whichever instance got here first has finished.
+      await db.execute(sql`select pg_advisory_lock(${LOCK_KEY})`)
+      lockAcquired = true
+    } catch (lockError) {
+      console.warn(
+        '[migrate] advisory lock not available (connection pooler / pgbouncer detected), proceeding without advisory lock:',
+        lockError instanceof Error ? lockError.message : lockError,
+      )
+    }
+
     try {
       await migrate(db, { migrationsFolder })
       console.log('[migrate] schema is up to date')
     } finally {
-      // Released explicitly rather than left to the connection closing, so a
-      // pooled connection handed back to someone else is not still holding it.
-      await db.execute(sql`select pg_advisory_unlock(${LOCK_KEY})`)
+      if (lockAcquired) {
+        // Released explicitly rather than left to the connection closing
+        await db.execute(sql`select pg_advisory_unlock(${LOCK_KEY})`).catch(() => {})
+      }
     }
   } finally {
     await pool.end()
@@ -82,7 +93,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('[migrate] failed:', error instanceof Error ? error.message : error)
+  console.error('[migrate] failed:', error.cause || error)
   // Non-zero so the platform stops the release here, rather than starting an
   // app whose code expects columns the database does not have.
   process.exit(1)

@@ -284,6 +284,9 @@ export function GuardRoutesTable({ projectId, routes }: { projectId: string; rou
   const [pending, startTransition] = useTransition();
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
+  const realRoutes = routes.filter((r) => r.source !== 'sample');
+  const sampleCount = routes.length - realRoutes.length;
+
   function refresh() {
     setSyncMsg(null);
     startTransition(async () => {
@@ -298,12 +301,17 @@ export function GuardRoutesTable({ projectId, routes }: { projectId: string; rou
   }
 
   function handleClear() {
-    if (!confirm('Clear all observed routes for this project?')) return;
+    const confirmation = prompt('Type CLEAR to delete all observed routes and synced guard prober targets:');
+    if (!confirmation || confirmation.trim().toUpperCase() !== 'CLEAR') {
+      return;
+    }
     setSyncMsg(null);
     startTransition(async () => {
-      const res = await clearGuardRoutesAction(projectId);
+      const res = await clearGuardRoutesAction(projectId, confirmation);
       if (res.ok) {
-        setSyncMsg('All observed routes cleared.');
+        setSyncMsg(
+          `Cleared ${res.deletedRoutes} route(s) and ${res.deletedTargets} synced guard target(s).`,
+        );
         router.refresh();
       } else {
         setSyncMsg(`Clear failed: ${res.error}`);
@@ -316,7 +324,12 @@ export function GuardRoutesTable({ projectId, routes }: { projectId: string; rou
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-c-muted">
-            {routes.length} routes &amp; actions observed
+            {realRoutes.length} real routes observed
+            {sampleCount > 0 && (
+              <span className="ml-1 text-[11px] font-normal text-amber-600 dark:text-amber-400">
+                (+{sampleCount} sample)
+              </span>
+            )}
           </p>
           {syncMsg && (
             <p className="mt-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -361,12 +374,19 @@ export function GuardRoutesTable({ projectId, routes }: { projectId: string; rou
               return (
                 <tr key={r.id} className="hover:bg-c-soft/50">
                   <td className="px-4 py-3 font-mono text-xs font-semibold text-c-ink">
-                    {r.pattern}
-                    {isNew && (
-                      <span className="ml-2 rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-                        new
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{r.pattern}</span>
+                      {r.source === 'sample' && (
+                        <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                          sample
+                        </span>
+                      )}
+                      {isNew && (
+                        <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                          new
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-xs">
                     <span

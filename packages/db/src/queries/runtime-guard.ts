@@ -1,7 +1,7 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 
 import { db } from '../client.ts';
-import { runtimeRouteStats, runtimeRoutes } from '../schema.ts';
+import { runtimeProberTargets, runtimeRouteStats, runtimeRoutes } from '../schema.ts';
 
 /** Raw aggregated row — aggregated counts for dashboard display and heuristic evaluation. */
 export type GuardRouteRow = {
@@ -9,38 +9,152 @@ export type GuardRouteRow = {
   pattern: string;
   method: string;
   kind: string;
+  source: string | null;
   firstSeenAt: Date;
   lastSeenAt: Date;
   withSession: number;
   withoutSession: number;
 };
 
-export async function listGuardRoutes(projectId: string, limit = 200): Promise<GuardRouteRow[]> {
+export type GuardRoutesWindow =
+  | string
+  | number
+  | { days?: number; hours?: number; since?: Date }
+  | null;
+
+export type ListGuardRoutesOptions = {
+  limit?: number;
+  window?: GuardRoutesWindow;
+  now?: Date;
+};
+
+/**
+ * Parses a window specification into a cutoff Date.
+ * Supported formats:
+ * - '7d', '7 days', '24h', '24 hours', '30d'
+ * - number (treated as days, e.g. 7)
+ * - object { days, hours, since }
+ * - null / 'all' (disables windowing, returns null)
+ * Default: 7 days ago.
+ */
+export function parseGuardWindowCutoff(
+  window: GuardRoutesWindow = '7d',
+  now: Date = new Date(),
+): Date | null {
+  if (window === null || window === 'all') return null;
+
+  if (typeof window === 'object') {
+    if (window.since instanceof Date) {
+      return window.since;
+    }
+    const days = window.days ?? (window.hours ? window.hours / 24 : 7);
+    return new Date(now.getTime() - days * 24 * 3600_000);
+  }
+
+  if (typeof window === 'number') {
+    return new Date(now.getTime() - window * 24 * 3600_000);
+  }
+
+  if (typeof window === 'string') {
+    const trimmed = window.trim().toLowerCase();
+    const match = trimmed.match(/^(\d+)\s*(d|day|days|h|hour|hours|m|min|mins|minutes)?$/);
+    if (match && match[1]) {
+      const val = parseInt(match[1], 10);
+      const unit = match[2] ?? 'd';
+      if (unit.startsWith('h')) {
+        return new Date(now.getTime() - val * 3600_000);
+      }
+      if (unit.startsWith('m')) {
+        return new Date(now.getTime() - val * 60_000);
+      }
+      return new Date(now.getTime() - val * 24 * 3600_000);
+    }
+  }
+
+  return new Date(now.getTime() - 7 * 24 * 3600_000);
+}
+
+/**
+ * Lists routes and aggregates their session counts within a recent time window.
+ * Default window is '7d' (last 7 days of runtime_route_stats).
+ */
+export async function listGuardRoutes(
+  projectId: string,
+  limitOrOptions: number | ListGuardRoutesOptions = 200,
+  windowParam: GuardRoutesWindow = '7d',
+): Promise<GuardRouteRow[]> {
+  let limit = 200;
+  let window: GuardRoutesWindow = '7d';
+  let now = new Date();
+
+  if (typeof limitOrOptions === 'number') {
+    limit = limitOrOptions;
+    window = windowParam;
+  } else if (typeof limitOrOptions === 'object' && limitOrOptions !== null) {
+    if (limitOrOptions.limit !== undefined) limit = limitOrOptions.limit;
+    if (limitOrOptions.window !== undefined) window = limitOrOptions.window;
+    if (limitOrOptions.now !== undefined) now = limitOrOptions.now;
+  }
+
+  const cutoff = parseGuardWindowCutoff(window, now);
+  const joinCondition = cutoff
+    ? and(
+        eq(runtimeRouteStats.routeId, runtimeRoutes.id),
+        gte(runtimeRouteStats.hour, cutoff),
+      )
+    : eq(runtimeRouteStats.routeId, runtimeRoutes.id);
+
   return db
     .select({
       id: runtimeRoutes.id,
       pattern: runtimeRoutes.pattern,
       method: runtimeRoutes.method,
       kind: runtimeRoutes.kind,
+      source: runtimeRoutes.source,
       firstSeenAt: runtimeRoutes.firstSeenAt,
       lastSeenAt: runtimeRoutes.lastSeenAt,
       withSession: sql<number>`coalesce(sum(${runtimeRouteStats.withSession}), 0)::int`,
       withoutSession: sql<number>`coalesce(sum(${runtimeRouteStats.withoutSession}), 0)::int`,
     })
     .from(runtimeRoutes)
-    .leftJoin(runtimeRouteStats, eq(runtimeRouteStats.routeId, runtimeRoutes.id))
+    .leftJoin(runtimeRouteStats, joinCondition)
     .where(eq(runtimeRoutes.projectId, projectId))
     .groupBy(runtimeRoutes.id)
     .orderBy(desc(runtimeRoutes.lastSeenAt))
     .limit(limit);
 }
 
-export async function clearGuardRoutes(projectId: string): Promise<number> {
-  const deleted = await db
-    .delete(runtimeRoutes)
-    .where(eq(runtimeRoutes.projectId, projectId))
-    .returning({ id: runtimeRoutes.id });
-  return deleted.length;
+export type ClearRoutesResult = {
+  deletedRoutes: number;
+  deletedTargets: number;
+};
+
+/**
+ * Clears all observed routes for a project AND removes synced 'guard' prober targets
+ * in a single transaction. Preserves 'manual' and 'default' targets.
+ */
+export async function clearGuardRoutes(projectId: string): Promise<ClearRoutesResult> {
+  return db.transaction(async (tx) => {
+    const deletedRoutes = await tx
+      .delete(runtimeRoutes)
+      .where(eq(runtimeRoutes.projectId, projectId))
+      .returning({ id: runtimeRoutes.id });
+
+    const deletedTargets = await tx
+      .delete(runtimeProberTargets)
+      .where(
+        and(
+          eq(runtimeProberTargets.projectId, projectId),
+          eq(runtimeProberTargets.source, 'guard'),
+        ),
+      )
+      .returning({ id: runtimeProberTargets.id });
+
+    return {
+      deletedRoutes: deletedRoutes.length,
+      deletedTargets: deletedTargets.length,
+    };
+  });
 }
 
 export type IngestRouteEvent = {
@@ -83,6 +197,7 @@ export async function recordRouteEvents(
     pattern: e.pattern,
     method: e.method.toUpperCase(),
     kind: e.kind ?? 'route',
+    source: null,
   }));
 
   const upsertedRoutes = await db
@@ -90,7 +205,10 @@ export async function recordRouteEvents(
     .values(routeValues)
     .onConflictDoUpdate({
       target: [runtimeRoutes.projectId, runtimeRoutes.pattern, runtimeRoutes.method],
-      set: { lastSeenAt: now },
+      set: {
+        lastSeenAt: now,
+        source: sql`null`,
+      },
     })
     .returning({ id: runtimeRoutes.id, pattern: runtimeRoutes.pattern, method: runtimeRoutes.method });
 
@@ -167,6 +285,7 @@ export async function seedDemoGuardRoutes(projectId: string): Promise<void> {
         pattern: item.pattern,
         method: item.method,
         kind: item.kind,
+        source: 'sample',
       })
       .onConflictDoUpdate({
         target: [runtimeRoutes.projectId, runtimeRoutes.pattern, runtimeRoutes.method],

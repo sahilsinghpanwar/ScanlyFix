@@ -46,18 +46,39 @@ export async function simulateSampleTrafficAction(projectId: string): Promise<Gu
   }
 }
 
-export async function clearGuardRoutesAction(projectId: string): Promise<{ ok: boolean; error?: string }> {
+export type ClearGuardRoutesResult =
+  | { ok: true; deletedRoutes: number; deletedTargets: number }
+  | { ok: false; error: string };
+
+export async function clearGuardRoutesAction(
+  projectId: string,
+  confirmation?: string,
+): Promise<ClearGuardRoutesResult> {
   try {
     const user = await requireUser();
     const project = await getProject(projectId, { kind: 'user', userId: user.id });
     if (!project) return { ok: false, error: 'not_found' };
 
+    // Typed confirmation check: requires explicit confirmation token ('CLEAR' or project name)
+    const normalized = confirmation?.trim();
+    if (
+      !normalized ||
+      (normalized !== 'CLEAR' && normalized.toLowerCase() !== 'clear' && normalized !== project.name)
+    ) {
+      return { ok: false, error: 'confirmation_required' };
+    }
+
     const { clearGuardRoutes } = await import('@scanlyfix/db');
-    await clearGuardRoutes(projectId);
+    const result = await clearGuardRoutes(projectId);
 
     revalidatePath('/runtime/guard');
     revalidatePath('/runtime');
-    return { ok: true };
+    revalidatePath('/runtime/probers');
+    return {
+      ok: true,
+      deletedRoutes: result.deletedRoutes,
+      deletedTargets: result.deletedTargets,
+    };
   } catch (err) {
     console.error('[clearGuardRoutesAction] error:', err);
     return { ok: false, error: 'clear_failed' };

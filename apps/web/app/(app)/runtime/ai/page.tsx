@@ -6,6 +6,7 @@ import {
   getSpendBreakdown,
   getSpendCeilingMicroUsd,
   getSpendLast24hMicroUsd,
+  getSpendHourlyBuckets,
   listProjects,
 } from '@scanlyfix/db';
 
@@ -74,12 +75,13 @@ export default async function AiConsolePage({
     );
   }
 
-  const [calls, breakdown, hourSpend, last24h, ceilingMicro] = await Promise.all([
+  const [calls, breakdown, hourSpend, last24h, ceilingMicro, hourlyBuckets] = await Promise.all([
     listRecentAiCalls(projectId),
     getSpendBreakdown(projectId),
     getCurrentHourSpendMicroUsd(projectId),
     getSpendLast24hMicroUsd(projectId),
     getSpendCeilingMicroUsd(projectId),
+    getSpendHourlyBuckets(projectId, 24),
   ]);
 
   const summary = buildAiSummary({ calls, byModel: breakdown.byModel, byUser: breakdown.byUser });
@@ -138,6 +140,7 @@ export default async function AiConsolePage({
           last24hMicroUsd={last24h}
           ceilingMicroUsd={ceilingMicro}
           calls={calls}
+          hourlyBuckets={hourlyBuckets}
         />
       </div>
     </div>

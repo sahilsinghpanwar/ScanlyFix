@@ -69,7 +69,7 @@ export default async function GuardPage({
 
   const view: GuardRouteView[] = routes.map((r) => ({
     ...r,
-    needsSession: computeNeedsSession(r.withSession, r.withoutSession),
+    needsSession: computeNeedsSession(r.withSession, r.withoutSession, r.source),
   }));
 
   return (

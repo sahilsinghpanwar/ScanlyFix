@@ -49,4 +49,9 @@ export const EVENTS = {
    * scan applies, just on a different model.
    */
   repoScanRequested: 'scanlyfix/repo-scan.requested',
+  /**
+   * Per-project fan-out event for nightly auth prober.
+   * Consumed by child worker with jitter and per-project concurrency limit.
+   */
+  authProberRunProject: 'runtime/auth-prober.run-project',
 } as const

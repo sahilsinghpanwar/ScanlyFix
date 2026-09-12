@@ -2,6 +2,7 @@
 
 import { useTransition } from 'react';
 import { resolveFindingAction } from '@/app/(app)/runtime/probers/action';
+import { detectFlappingPaths } from '@/lib/runtime/auth-prober/flap';
 
 type Finding = {
   id: string;
@@ -9,6 +10,8 @@ type Finding = {
   baselineStatus: number;
   actualStatus: number;
   severity: string;
+  variant?: string | null;
+  keyFingerprint?: string | null;
   resolvedAt: Date | null;
   createdAt: Date;
 };
@@ -23,6 +26,7 @@ export function ProberFindings({
   openCount: number;
 }) {
   const [pending, startTransition] = useTransition();
+  const flapAnalysis = detectFlappingPaths(findings);
 
   if (findings.length === 0) {
     return (
@@ -44,6 +48,8 @@ export function ProberFindings({
       <div className="space-y-3">
         {findings.map((f) => {
           const isResolved = Boolean(f.resolvedAt);
+          const isAnonExposure = f.variant === 'anon_role';
+          const isUnstable = flapAnalysis.isUnstable(f.path);
           return (
             <div
               key={f.id}
@@ -66,17 +72,43 @@ export function ProberFindings({
                     >
                       {f.severity}
                     </span>
+                    {isUnstable && (
+                      <span
+                        className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                        title="Flapping route: regressed 3 or more times in the last 30 days"
+                      >
+                        unstable
+                      </span>
+                    )}
+                    {isAnonExposure && (
+                      <span className="rounded bg-purple-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-purple-600 dark:text-purple-400">
+                        anon-key exposure
+                      </span>
+                    )}
                     {isResolved && (
                       <span className="rounded bg-c-soft px-1.5 py-0.5 text-[10px] font-medium text-c-muted">
                         Resolved
                       </span>
                     )}
                   </div>
-                  <p className="mt-1.5 text-xs text-c-muted">
-                    Previously received <span className="font-mono font-medium text-c-ink">{f.baselineStatus}</span> (protected),
-                    now returns <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{f.actualStatus}</span> —
-                    endpoint is accessible without authentication.
-                  </p>
+                  {isAnonExposure ? (
+                    <p className="mt-1.5 text-xs text-c-muted">
+                      Previously received <span className="font-mono font-medium text-c-ink">{f.baselineStatus}</span> (protected),
+                      now opens with the public anon key (Supabase RLS/anon-role exposure) returning{' '}
+                      <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{f.actualStatus} OK</span>.
+                      {f.keyFingerprint && (
+                        <span className="ml-1 text-[11px] text-c-muted">
+                          (Key fingerprint: <code className="font-mono">{f.keyFingerprint}</code>)
+                        </span>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-c-muted">
+                      Previously received <span className="font-mono font-medium text-c-ink">{f.baselineStatus}</span> (protected),
+                      now returns <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{f.actualStatus}</span> —
+                      endpoint is accessible without authentication.
+                    </p>
+                  )}
                 </div>
                 {!isResolved && (
                   <button

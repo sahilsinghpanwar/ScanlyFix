@@ -67,14 +67,50 @@ export async function runProberAction(projectId: string): Promise<ActionResult> 
   }
 }
 
-export async function addTargetAction(projectId: string, path: string): Promise<ActionResult> {
+export async function addTargetAction(
+  projectId: string,
+  path: string,
+  method: string = 'GET',
+): Promise<ActionResult> {
   try {
     await assertOwnership(projectId);
-    const cleanPath = path.trim();
+
+    // 1. Enforce method === 'GET'
+    const normalizedMethod = (method || 'GET').trim().toUpperCase();
+    if (normalizedMethod !== 'GET') {
+      return { ok: false, error: `Only GET method is supported for prober targets (received ${normalizedMethod})` };
+    }
+
+    // 2. Validate path against buildProbeUrl & sanitizeProbePath rules
+    const cleanPath = path ? path.trim() : '';
     if (!cleanPath || !cleanPath.startsWith('/')) {
       return { ok: false, error: 'Path must start with / (e.g. /admin, /api/secret)' };
     }
-    const { addProberTarget } = await import('@scanlyfix/db');
+    if (cleanPath.includes('..')) {
+      return { ok: false, error: 'Path must not contain ".." directory traversal' };
+    }
+    if (/\s/.test(cleanPath)) {
+      return { ok: false, error: 'Path cannot contain whitespace' };
+    }
+    if (cleanPath.length > 200) {
+      return { ok: false, error: 'Target path must not exceed 200 characters' };
+    }
+
+    const { isValidProbePath } = await import('@/lib/runtime/auth-prober');
+    if (!isValidProbePath(cleanPath)) {
+      return { ok: false, error: 'Invalid target path format or length exceeds 200 characters after substitution' };
+    }
+
+    // 3. Cap manual targets at 25 per project
+    const { addProberTarget, countManualProberTargets, getProberTarget } = await import('@scanlyfix/db');
+    const manualCount = await countManualProberTargets(projectId);
+    if (manualCount >= 25) {
+      const existing = await getProberTarget(projectId, cleanPath, 'GET');
+      if (!existing || existing.source !== 'manual') {
+        return { ok: false, error: 'Maximum limit of 25 manual targets per project reached' };
+      }
+    }
+
     await addProberTarget(projectId, cleanPath, 'GET', 'manual');
     revalidatePath('/runtime');
     revalidatePath('/runtime/probers');
@@ -109,5 +145,33 @@ export async function resolveFindingAction(projectId: string, findingId: string)
   } catch (err) {
     console.error('[resolveFindingAction] error:', err);
     return { ok: false, error: err instanceof Error ? err.message : 'resolve_failed' };
+  }
+}
+
+export async function rerecordBaselineAction(projectId: string, targetId: string): Promise<ActionResult> {
+  try {
+    await assertOwnership(projectId);
+    const { getRuntimeProjectContext, setBaseline, listProberTargets } = await import('@scanlyfix/db');
+    const ctx = await getRuntimeProjectContext(projectId);
+    if (!ctx || !ctx.hostname) return { ok: false, error: 'Project hostname not configured' };
+    if (!ctx.isVerified) return { ok: false, error: 'verify_domain_first' };
+
+    const targets = await listProberTargets(projectId);
+    const target = targets.find((t) => t.id === targetId);
+    if (!target) return { ok: false, error: 'Target not found' };
+
+    const { probeTarget } = await import('@/lib/runtime/auth-prober');
+    const outcome = await probeTarget(ctx.hostname, target.path);
+    if (!outcome.ok) {
+      return { ok: false, error: `Probe failed: ${outcome.error}` };
+    }
+
+    await setBaseline(targetId, outcome.status);
+    revalidatePath('/runtime');
+    revalidatePath('/runtime/probers');
+    return { ok: true, message: `Re-recorded baseline for ${target.path} (HTTP ${outcome.status}).` };
+  } catch (err) {
+    console.error('[rerecordBaselineAction] error:', err);
+    return { ok: false, error: err instanceof Error ? err.message : 'rerecord_failed' };
   }
 }

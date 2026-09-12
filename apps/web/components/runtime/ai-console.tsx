@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 
 import { setCeilingAction, sendSampleAiCallAction } from '@/app/(app)/runtime/ai/actions.ts';
 import { formatUsd, type AiSummary } from '@/lib/runtime/ai-log/summary.ts';
+import { computeHourlyChartLayout } from '@/lib/runtime/ai-spend/chart.ts';
+import type { HourlySpendBucket } from '@scanlyfix/db';
 
 type Call = {
   id: string;
@@ -15,6 +17,7 @@ type Call = {
   latencyMs: number | null;
   costMicroUsd: number | null;
   userHash: string | null;
+  source?: string | null;
   createdAt: Date;
 };
 
@@ -26,6 +29,7 @@ export function AiConsole(props: {
   last24hMicroUsd: number;
   ceilingMicroUsd: number | null;
   calls: Call[];
+  hourlyBuckets?: HourlySpendBucket[];
 }) {
   const { summary } = props;
   const [showSetup, setShowSetup] = useState(props.calls.length === 0);
@@ -33,6 +37,8 @@ export function AiConsole(props: {
     props.ceilingMicroUsd && props.ceilingMicroUsd > 0
       ? Math.min(100, Math.round((props.projectedHourMicroUsd / props.ceilingMicroUsd) * 100))
       : null;
+
+  const hasRecentSamples = props.calls.length > 0 && props.calls.slice(0, 5).some((c) => c.source === 'sample');
 
   return (
     <div className="space-y-6">
@@ -60,6 +66,10 @@ export function AiConsole(props: {
 
       <CeilingBar projectId={props.projectId} ceilingMicroUsd={props.ceilingMicroUsd} />
 
+      {props.hourlyBuckets && props.hourlyBuckets.length > 0 && (
+        <SpendHourlyChart buckets={props.hourlyBuckets} />
+      )}
+
       {/* ── CALL LOG ── */}
       {props.calls.length === 0 ? (
         <SetupCard projectId={props.projectId} />
@@ -68,7 +78,15 @@ export function AiConsole(props: {
           <div className="overflow-hidden rounded-xl border border-c-line bg-c-card shadow-sm">
             <div className="flex flex-col gap-2 border-b border-c-line px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-c-ink">Recent AI Calls ({props.calls.length})</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-c-ink">Recent AI Calls ({props.calls.length})</h3>
+                  {hasRecentSamples && (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      sample data
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-c-muted">Latest calls observed via SDK wrappers — metadata only</p>
               </div>
               <div className="flex items-center gap-2">
@@ -101,9 +119,16 @@ export function AiConsole(props: {
                         {new Date(c.createdAt).toLocaleTimeString()}
                       </td>
                       <td className="px-4 py-2.5 text-xs">
-                        <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-medium capitalize text-c-ink">
-                          {c.provider || 'openai'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-medium capitalize text-c-ink">
+                            {c.provider || 'openai'}
+                          </span>
+                          {c.source === 'sample' && (
+                            <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                              sample
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 font-mono text-xs font-medium text-c-ink">{c.model}</td>
                       <td className="px-4 py-2.5 text-xs text-c-ink">
@@ -225,6 +250,82 @@ function CeilingBar({ projectId, ceilingMicroUsd }: { projectId: string; ceiling
   );
 }
 
+export function SpendHourlyChart({ buckets }: { buckets: HourlySpendBucket[] }) {
+  const layout = computeHourlyChartLayout(buckets);
+
+  return (
+    <div className="rounded-xl border border-c-line bg-c-card p-5 shadow-sm">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-c-ink">24-Hour Spend Activity</h3>
+          <p className="text-xs text-c-muted">Hourly spend trajectory over the last 24 hours</p>
+        </div>
+        <div className="flex items-center gap-4 text-xs">
+          <div>
+            <span className="text-c-muted">Total 24h: </span>
+            <span className="font-semibold text-c-ink">{formatUsd(layout.total24h)}</span>
+          </div>
+          <div>
+            <span className="text-c-muted">Calls: </span>
+            <span className="font-semibold text-c-ink">{layout.totalCalls.toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto">
+        <div className="min-w-[550px]">
+          <svg viewBox={`0 0 ${layout.totalWidth} ${layout.height}`} className="w-full h-28 overflow-visible">
+            {/* Horizontal baseline */}
+            <line
+              x1="0"
+              y1={layout.height - 20}
+              x2={layout.totalWidth}
+              y2={layout.height - 20}
+              className="stroke-c-line"
+              strokeDasharray="2,2"
+              strokeWidth="1"
+            />
+
+            {/* 24 Hourly bars */}
+            {layout.bars.map((bar) => (
+              <g key={bar.hour} className="group cursor-pointer">
+                {/* Bar */}
+                <rect
+                  x={bar.x}
+                  y={bar.y}
+                  width={bar.width}
+                  height={bar.height}
+                  rx="3"
+                  className={`transition-all duration-200 ${
+                    bar.isZero
+                      ? 'fill-c-line/40 hover:fill-c-line'
+                      : 'fill-c-accent hover:opacity-80'
+                  }`}
+                />
+
+                {/* Tooltip on hover */}
+                <title>{bar.tooltip}</title>
+
+                {/* X-axis time label every 4 hours */}
+                {bar.showLabel && (
+                  <text
+                    x={bar.x + bar.width / 2}
+                    y={layout.height - 4}
+                    textAnchor="middle"
+                    className="fill-c-muted text-[10px] font-mono select-none"
+                  >
+                    {bar.displayHour}
+                  </text>
+                )}
+              </g>
+            ))}
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SetupCard({ projectId, hasCalls = false }: { projectId: string; hasCalls?: boolean }) {
   const [tab, setTab] = useState<'openai' | 'anthropic'>('openai');
   const [origin, setOrigin] = useState('https://scanlyfix.com');
@@ -251,19 +352,28 @@ function SetupCard({ projectId, hasCalls = false }: { projectId: string; hasCall
     });
   };
 
-  const openAiSnippet = `import { createRuntime, wrapOpenAI, SpendFirewall, MemorySpendStore } from '@scanlyfix/runtime-sdk';
+  const openAiSnippet = `import { createRuntime, wrapOpenAI, SpendFirewall, MemorySpendStore, createRemoteConfigFetcher } from '@scanlyfix/runtime-sdk';
 import OpenAI from 'openai';
 
 const runtime = createRuntime({
   projectId: process.env.RUNTIME_PROJECT_ID!,
   ingestUrl: process.env.RUNTIME_INGEST_URL ?? '${origin}/api/runtime/ingest',
+  signingSecret: process.env.RUNTIME_SIGNING_SECRET,
 });
 
-// Optional hard spend firewall:
+// Spend firewall with live dashboard-driven ceiling (refreshes every 5 mins):
 const firewall = new SpendFirewall({
   projectId: process.env.RUNTIME_PROJECT_ID!,
   store: new MemorySpendStore(), // Multi-instance? Use createUpstashStore(url, token)
-  ceilingUsdPerHour: Number(process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR ?? 5),
+  configFetcher: createRemoteConfigFetcher({
+    configUrl: process.env.RUNTIME_CONFIG_URL ?? '${origin}/api/runtime/config',
+    projectId: process.env.RUNTIME_PROJECT_ID!,
+    signingSecret: process.env.RUNTIME_SIGNING_SECRET,
+  }),
+  // Optional local override: env var takes precedence if set
+  ceilingUsdPerHour: process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR
+    ? Number(process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR)
+    : undefined,
 });
 
 export const openai = wrapOpenAI(new OpenAI(), {
@@ -272,18 +382,26 @@ export const openai = wrapOpenAI(new OpenAI(), {
   getUserId: () => session?.user?.id, // One-way hashed on your server — raw ID never transmitted
 });`;
 
-  const anthropicSnippet = `import { createRuntime, wrapAnthropic, SpendFirewall, MemorySpendStore } from '@scanlyfix/runtime-sdk';
+  const anthropicSnippet = `import { createRuntime, wrapAnthropic, SpendFirewall, MemorySpendStore, createRemoteConfigFetcher } from '@scanlyfix/runtime-sdk';
 import Anthropic from '@anthropic-ai/sdk';
 
 const runtime = createRuntime({
   projectId: process.env.RUNTIME_PROJECT_ID!,
   ingestUrl: process.env.RUNTIME_INGEST_URL ?? '${origin}/api/runtime/ingest',
+  signingSecret: process.env.RUNTIME_SIGNING_SECRET,
 });
 
 const firewall = new SpendFirewall({
   projectId: process.env.RUNTIME_PROJECT_ID!,
   store: new MemorySpendStore(),
-  ceilingUsdPerHour: Number(process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR ?? 5),
+  configFetcher: createRemoteConfigFetcher({
+    configUrl: process.env.RUNTIME_CONFIG_URL ?? '${origin}/api/runtime/config',
+    projectId: process.env.RUNTIME_PROJECT_ID!,
+    signingSecret: process.env.RUNTIME_SIGNING_SECRET,
+  }),
+  ceilingUsdPerHour: process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR
+    ? Number(process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR)
+    : undefined,
 });
 
 export const anthropic = wrapAnthropic(new Anthropic(), {
@@ -357,7 +475,9 @@ export const anthropic = wrapAnthropic(new Anthropic(), {
 
         <pre className="mt-2 overflow-x-auto rounded-lg border border-c-line bg-c-soft p-3 font-mono text-xs text-c-ink">{`RUNTIME_PROJECT_ID=${projectId}
 RUNTIME_INGEST_URL=${origin}/api/runtime/ingest
-RUNTIME_SPEND_CEILING_USD_PER_HOUR=5`}</pre>
+RUNTIME_CONFIG_URL=${origin}/api/runtime/config
+# Optional local static override:
+# RUNTIME_SPEND_CEILING_USD_PER_HOUR=5`}</pre>
       </div>
 
       <div className="rounded-xl border border-c-line bg-c-card p-6 shadow-sm">
@@ -366,6 +486,10 @@ RUNTIME_SPEND_CEILING_USD_PER_HOUR=5`}</pre>
           <li className="flex items-center gap-2">
             <span className="text-emerald-500">✓</span>
             <span><strong className="text-c-ink">Zero-proxy architecture:</strong> Your secret keys stay in your container; calls route direct to OpenAI/Anthropic.</span>
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="text-emerald-500">✓</span>
+            <span><strong className="text-c-ink">Dashboard-driven firewall:</strong> Set hourly ceilings directly in the dashboard; the SDK firewall refreshes its ceiling every 5 minutes in the background without redeploying code (with local env var override support).</span>
           </li>
           <li className="flex items-center gap-2">
             <span className="text-emerald-500">✓</span>

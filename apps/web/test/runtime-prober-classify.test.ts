@@ -34,4 +34,62 @@ describe('auth prober classification', () => {
     expect(severityForPath('/api/users')).toBe('critical');
     expect(severityForPath('/dashboard')).toBe('high');
   });
+
+  describe('anon-key classification (anon_open)', () => {
+    it('bare is protected + anonActual is 200 → anon_open (Supabase RLS leak)', () => {
+      const v = evaluateTarget({
+        path: '/api/data',
+        baseline: 401,
+        actual: 401,
+        anonActual: 200,
+      });
+      expect(v).toEqual({
+        verdict: 'anon_open',
+        status: 401,
+        anonStatus: 200,
+        severity: 'critical',
+      });
+    });
+
+    it('high severity for non-sensitive paths exposed via anon key', () => {
+      const v = evaluateTarget({
+        path: '/dashboard/public-view',
+        baseline: 307,
+        actual: 307,
+        anonActual: 200,
+      });
+      expect(v).toEqual({
+        verdict: 'anon_open',
+        status: 307,
+        anonStatus: 200,
+        severity: 'high',
+      });
+    });
+
+    it('bare is protected + anonActual is also protected → remains protected', () => {
+      const v = evaluateTarget({
+        path: '/api/secure',
+        baseline: 401,
+        actual: 401,
+        anonActual: 403,
+      });
+      expect(v).toEqual({
+        verdict: 'protected',
+        status: 401,
+      });
+    });
+
+    it('baseline is null with anonActual → still records baseline', () => {
+      const v = evaluateTarget({
+        path: '/api/new',
+        baseline: null,
+        actual: 401,
+        anonActual: 200,
+      });
+      expect(v).toEqual({
+        verdict: 'baseline_recorded',
+        status: 401,
+      });
+    });
+  });
 });

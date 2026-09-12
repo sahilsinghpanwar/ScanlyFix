@@ -9,7 +9,7 @@ import {
 
 import { inngest } from '../../lib/inngest.ts';
 import { sendEmail } from '../../lib/email.ts';
-import { evaluateVelocity } from '../../lib/runtime/ai-spend/velocity.ts';
+import { evaluateVelocity, DEFAULT_ABSOLUTE_THRESHOLD_USD } from '../../lib/runtime/ai-spend/velocity.ts';
 import { formatUsd } from '../../lib/runtime/ai-log/summary.ts';
 
 /**
@@ -47,13 +47,22 @@ export const runtimeSpendWatch = inngest.createFunction(
         const ownerEmail = await getProjectOwnerEmail(projectId);
         if (!ownerEmail) return 'no-email';
 
+        const thresholdDisplay = ceilingMicro
+          ? `${formatUsd(ceilingMicro)}/hour`
+          : `$${DEFAULT_ABSOLUTE_THRESHOLD_USD}/hour (default threshold)`;
+
+        const pctDisplay =
+          v.pctOfCeiling !== null
+            ? ` (${v.pctOfCeiling}% of ceiling)`
+            : ` (exceeding default $${DEFAULT_ABSOLUTE_THRESHOLD_USD}/h threshold)`;
+
         await sendEmail({
           to: ownerEmail,
-          subject: `💸 AI spend velocity — ${ctx?.hostname ?? projectId}: projected ${formatUsd(v.projectedHourlyMicroUsd)}/h (${v.pctOfCeiling}% of ceiling)`,
+          subject: `💸 AI spend velocity — ${ctx?.hostname ?? projectId}: projected ${formatUsd(v.projectedHourlyMicroUsd)}/h${pctDisplay}`,
           text: [
             `Pichhle 15 min: ${formatUsd(windowMicro)}`,
             `Is rate par: ${formatUsd(v.projectedHourlyMicroUsd)}/hour`,
-            `Alert threshold: ${formatUsd(ceilingMicro ?? undefined)}/hour`,
+            `Alert threshold: ${thresholdDisplay}`,
             '',
             'Runtime → AI spend kholo — "Top user share" batayega loop kis user par chal raha hai.',
             'Hard block chahiye? Apne app me SpendFirewall lagao (ceilingUsdPerHour env) — wo call provider tak jaane se PEHLE refuse karta hai.',
