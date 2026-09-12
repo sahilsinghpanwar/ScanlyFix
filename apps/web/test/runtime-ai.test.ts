@@ -6,6 +6,8 @@ import { buildAiSummary, formatUsd, projectEndOfHourMicroUsd } from '../lib/runt
 vi.mock('@scanlyfix/db', () => ({
   recordRouteEvents: vi.fn().mockResolvedValue(2),
   recordAiCallEvents: vi.fn().mockResolvedValue(2),
+  getProjectRuntimeSecret: vi.fn().mockResolvedValue(null),
+  findProjectIdByHost: vi.fn().mockResolvedValue('proj-123'),
 }));
 
 describe('AI Spend Velocity evaluation', () => {
