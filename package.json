@@ -7,16 +7,17 @@
     "node": ">=22"
   },
   "scripts": {
-    "scan": "pnpm --filter @scanlyfix/cli exec tsx src/index.ts",
-    "dev": "turbo run dev --filter=@scanlyfix/web",
-    "test": "turbo run test",
-    "test:unit": "turbo run test:unit",
-    "test:integration": "turbo run test:integration",
-    "test:e2e": "turbo run test:e2e",
-    "typecheck": "turbo run typecheck",
-    "razorpay:check": "node scripts/razorpay-preflight.mjs",
+    "audit:redirects": "node scripts/audit-redirects.mjs",
     "db:deploy": "pnpm --filter @scanlyfix/db db:deploy",
-    "inngest:dev": "pnpm --filter @scanlyfix/web inngest:dev"
+    "dev": "turbo run dev --filter=@scanlyfix/web",
+    "inngest:dev": "pnpm --filter @scanlyfix/web inngest:dev",
+    "razorpay:check": "node scripts/razorpay-preflight.mjs",
+    "scan": "pnpm --filter @scanlyfix/cli exec tsx src/index.ts",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "test:integration": "turbo run test:integration",
+    "test:unit": "turbo run test:unit",
+    "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",

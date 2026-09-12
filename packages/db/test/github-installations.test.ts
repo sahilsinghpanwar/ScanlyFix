@@ -179,6 +179,36 @@ describe.skipIf(!live)('github installations and repos (SCANLYFIX_DB=1)', () => 
       expect(first?.id).toBe(second?.id)
     })
 
+    it('moves the row to whoever completes the install when a different account signs in', async () => {
+      const firstUserId = await makeUser()
+      const secondUserId = await makeUser()
+      const numericInstallationId = randomInstallationId()
+
+      // Installed under account A — the row is keyed to A's app user id.
+      const first = await upsertInstallation(viewer(firstUserId), {
+        installationId: numericInstallationId,
+        accountLogin: 'account-a',
+        accountType: 'User',
+      })
+
+      // The SAME GitHub grant is then completed while signed in as B. GitHub
+      // reuses the same installation id, so this must reassign the row to B —
+      // otherwise B's feed is empty forever and re-installing never helps.
+      const second = await upsertInstallation(viewer(secondUserId), {
+        installationId: numericInstallationId,
+        accountLogin: 'account-b',
+        accountType: 'User',
+      })
+
+      expect(second?.id).toBe(first?.id)
+      expect(second?.userId).toBe(secondUserId)
+
+      const viaFirst = await listInstallationsForViewer(viewer(firstUserId))
+      const viaSecond = await listInstallationsForViewer(viewer(secondUserId))
+      expect(viaFirst.map((i) => i.id)).not.toContain(first?.id)
+      expect(viaSecond.map((i) => i.id)).toContain(second?.id)
+    })
+
     it('returns null for an anonymous viewer', async () => {
       await expect(
         upsertInstallation(ANONYMOUS, {

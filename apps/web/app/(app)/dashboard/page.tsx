@@ -26,11 +26,16 @@ import {
   getScanForViewer,
   listProjectSummaries,
   listRecentScansForUser,
+  listRepoScansForRepo,
+  listReposForViewer,
   type DashboardFinding,
   type DashboardSummary,
+  type GithubRepo,
   type ProjectSummary,
+  type RepoScan,
   type Scan,
 } from '@scanlyfix/db'
+import { RepoScanButton } from '@/components/console/repo-scan-button.tsx'
 import type { Category, Severity } from '@scanlyfix/checks'
 import { getViewer, requireUser } from '@/lib/authz.ts'
 import { ScanForm } from '@/components/scan/scan-form.tsx'
@@ -43,6 +48,13 @@ import { Icon } from '@/components/console/icons.tsx'
 export const metadata = { title: 'Dashboard' }
 
 const CHECKS_PER_SCAN = 63
+
+const STATUS_LABEL: Record<string, string> = {
+  queued: 'Queued',
+  running: 'Running',
+  done: 'Done',
+  failed: 'Failed',
+}
 
 const SEVERITIES: readonly Severity[] = ['critical', 'high', 'medium', 'low', 'info']
 
@@ -110,11 +122,19 @@ export default async function DashboardPage() {
   if (user.priorities === null) redirect('/welcome?next=%2Fdashboard')
 
   const viewer = await getViewer()
-  const [summary, projects, recentScans] = await Promise.all([
+  const [summary, projects, recentScans, repos] = await Promise.all([
     getDashboardSummary(viewer),
     listProjectSummaries(viewer),
     listRecentScansForUser(viewer),
+    listReposForViewer(viewer),
   ])
+
+  // Latest scan per connected repo, for the repositories card below.
+  const reposWithScans: { repo: GithubRepo; latestScan: RepoScan | null }[] = []
+  for (const repo of repos) {
+    const repoScans = await listRepoScansForRepo(repo.id, 1)
+    reposWithScans.push({ repo, latestScan: repoScans[0] ?? null })
+  }
 
   /*
    * The newest ad-hoc scan, loaded with its findings, is what the live report
@@ -199,6 +219,8 @@ export default async function DashboardPage() {
         )}
 
         <Sites projects={projects} orgId={user.orgId} />
+
+        <Repositories repos={reposWithScans} />
       </div>
     </div>
   )
@@ -655,6 +677,116 @@ function ProjectRow({ summary }: { summary: ProjectSummary }) {
         )}
       </Link>
     </li>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* Repositories                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Connected GitHub repositories and their latest scan, so the code side of an
+ * account lives on the overview next to the site side. The report opens on
+ * the repo page; scanning happens only from the Scan button (or an automation)
+ * — everything else renders the last stored scan from the database.
+ */
+function Repositories({
+  repos,
+}: {
+  repos: { repo: GithubRepo; latestScan: RepoScan | null }[]
+}) {
+  return (
+    <section id="repositories" data-reveal="" className="scroll-mt-20">
+      <div data-reveal-item="" className="mb-4 flex flex-wrap items-center justify-between gap-4">
+        <h2 className="text-sm font-medium text-c-ink">Repositories</h2>
+        <Link
+          href="/feed#repositories"
+          className="rounded-md border border-c-line bg-c-card px-3 py-1.5 text-[12px] font-medium text-c-ink
+                     transition-colors hover:bg-c-soft"
+        >
+          Manage on Feed
+        </Link>
+      </div>
+
+      {repos.length === 0 ? (
+        <div
+          data-reveal-item=""
+          className="rounded-lg border border-c-line bg-c-card px-6 py-10 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+        >
+          <p className="text-sm font-medium text-c-ink">No repositories connected</p>
+          <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-c-muted text-pretty">
+            Connect a GitHub repository on the Feed page to scan its code for secrets,
+            vulnerable dependencies and workflow misconfigurations.
+          </p>
+          <Link
+            href="/feed"
+            className="mt-4 inline-flex items-center gap-2 rounded-full bg-c-ink px-5 py-2 text-[13px] font-medium text-c-brand-ink transition-opacity hover:opacity-90"
+          >
+            <Icon name="repo" size={15} />
+            Connect GitHub
+          </Link>
+        </div>
+      ) : (
+        <ul className="overflow-hidden rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          {repos.map(({ repo, latestScan }, index) => (
+            <li
+              key={repo.id}
+              data-reveal-item=""
+              className={`flex items-center gap-4 px-6 py-4 ${index === 0 ? '' : 'border-t border-c-line'}`}
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-c-line bg-c-soft text-c-muted">
+                <Icon name="repo" size={16} />
+              </span>
+              <Link
+                href={`/repos/${repo.id}`}
+                className="group min-w-0 flex-1"
+                title={`Open ${repo.fullName} report`}
+              >
+                <span className="block truncate text-sm font-medium text-c-ink transition-colors group-hover:text-c-brand-ink">
+                  {repo.fullName}
+                </span>
+                <span className="block truncate text-[13px] text-c-muted">
+                  {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
+                </span>
+              </Link>
+              <div className="hidden shrink-0 text-right sm:block">
+                {latestScan ? (
+                  <>
+                    <p
+                      className={`console-num text-lg font-semibold tracking-tight ${
+                        latestScan.scores?.overall != null
+                          ? scoreTone(latestScan.scores.overall)
+                          : latestScan.status === 'failed'
+                            ? 'text-sev-high'
+                            : 'text-c-muted'
+                      }`}
+                    >
+                      {latestScan.scores?.overall ?? (latestScan.status === 'failed' ? 'failed' : '—')}
+                    </p>
+                    <p className="text-[12px] text-c-muted">
+                      {latestScan.status === 'queued' || latestScan.status === 'running'
+                        ? `${latestScan.status}…`
+                        : latestScan.status === 'done'
+                          ? stamp(latestScan.createdAt)
+                          : STATUS_LABEL[latestScan.status] ?? latestScan.status}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[13px] text-c-muted">Not scanned</p>
+                )}
+              </div>
+              <Link
+                href={`/repos/${repo.id}`}
+                className="hidden shrink-0 rounded-md border border-c-line bg-c-card px-3 py-1.5 text-[12px] font-medium text-c-ink transition-colors hover:bg-c-soft sm:block"
+              >
+                View report
+              </Link>
+              <RepoScanButton repoId={repo.id} tone="quiet" label="Scan" />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 

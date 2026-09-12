@@ -9,9 +9,11 @@
 import Link from 'next/link'
 import { headers } from 'next/headers'
 import {
+  listConnectionsForViewer,
   listInstallationsForViewer,
   listReposForInstallation,
   listRepoScansForRepo,
+  type Connection,
   type GithubRepo,
   type RepoScan,
 } from '@scanlyfix/db'
@@ -21,7 +23,8 @@ import { buildInstallUrl, requestOrigin } from '@/lib/github-connect.ts'
 import { PageHeader } from '@/components/console/page-header.tsx'
 import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
-import { ScanRepoButton } from './scan-repo-button.tsx'
+import { RepoScanButton } from '@/components/console/repo-scan-button.tsx'
+import { SupabaseConnections } from '@/components/console/supabase-connections.tsx'
 
 export const metadata = { title: 'Feed' }
 
@@ -61,6 +64,7 @@ export default async function FeedPage({
   const user = await requireUser('/feed')
   const viewer = await getViewer()
   const installations = await listInstallationsForViewer(viewer)
+  const supabaseConnections: Connection[] = await listConnectionsForViewer(viewer)
 
   // Fetch repos per installation to avoid the broken cross-table join
   const repoLists = await Promise.all(
@@ -139,6 +143,8 @@ export default async function FeedPage({
               <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-c-body">
                 Install the ScanlyFix GitHub App to scan your repositories for
                 secrets, vulnerable dependencies, and workflow misconfigurations.
+                The feed tracks one repository per account — the first one the
+                install grants stays connected on re-installs.
               </p>
               <a
                 href={githubUrl}
@@ -186,20 +192,26 @@ export default async function FeedPage({
                 <li
                   key={repo.id}
                   data-reveal-item=""
-                  className={index === 0 ? '' : 'border-t border-c-line/60'}
+                  className={`group ${index === 0 ? '' : 'border-t border-c-line/60'}`}
                 >
                   <div className="flex items-center gap-4 px-6 py-5">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-c-soft text-c-muted">
-                      <Icon name="repo" size={18} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[15px] font-medium text-c-ink">
-                        {repo.fullName}
-                      </p>
-                      <p className="truncate text-[13px] text-c-muted">
-                        {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
-                      </p>
-                    </div>
+                    <Link
+                      href={`/repos/${repo.id}`}
+                      className="flex min-w-0 flex-1 items-center gap-4"
+                      title={`Open ${repo.fullName} report`}
+                    >
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-c-soft text-c-muted">
+                        <Icon name="repo" size={18} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[15px] font-medium text-c-ink transition-colors group-hover:text-c-brand-ink">
+                          {repo.fullName}
+                        </span>
+                        <span className="block truncate text-[13px] text-c-muted">
+                          {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
+                        </span>
+                      </span>
+                    </Link>
 
                     {/* Latest scan status */}
                     <div className="hidden shrink-0 text-right sm:block">
@@ -221,12 +233,22 @@ export default async function FeedPage({
                     </div>
 
                     {/* Scan buttons */}
-                    <ScanRepoButton repoId={repo.id} />
+                    <RepoScanButton repoId={repo.id} />
                   </div>
                 </li>
               ))}
             </ul>
           )}
+        </section>
+
+        {/* Supabase connections — the Level-1 deep scan (publishable-key checks only) */}
+        <section data-reveal="">
+          <div data-reveal-item="" className="mb-4 flex items-end justify-between gap-4">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
+              Supabase projects
+            </h2>
+          </div>
+          <SupabaseConnections connections={supabaseConnections} />
         </section>
 
         {/* Installation list — when multiple installations exist */}
