@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getViewer } from '@/lib/authz.ts'
+import { chooseConnectedRepo } from '@/lib/repo-cap.ts'
 import { getInstallationAccount, listInstallationRepos } from '@/lib/github-app.ts'
-import { upsertInstallation, upsertRepo } from '@scanlyfix/db'
+import {
+  deleteOtherReposForUser,
+  listReposForViewer,
+  upsertInstallation,
+  upsertRepo,
+} from '@scanlyfix/db'
 
 export const runtime = 'nodejs'
 
@@ -60,16 +66,31 @@ export async function GET(request: Request) {
     if (!installation) throw new Error('Could not record installation')
 
     const repos = await listInstallationRepos(installationId)
-    for (const repo of repos) {
-      await upsertRepo({
+
+    /*
+     * One repository per account. chooseConnectedRepo picks WHICH one survives
+     * (existing connected repo if the grant still covers it, else the first
+     * granted); the cap's delete removes every other repo row across the
+     * account's installations. Kept a no-op when the grant carries no repos —
+     * an install that selected nothing must not prune anything.
+     */
+    const existing = await listReposForViewer(viewer)
+    // Map GitHub's `id` onto the cap's `githubId` match key; the spread keeps
+    // every other InstallationRepo field the upsert below needs.
+    const granted = repos.map((repo) => ({ ...repo, githubId: repo.id }))
+    const chosen = chooseConnectedRepo(existing, granted)
+    if (chosen) {
+      const alreadyStored = existing.find((repo) => repo.githubId === chosen.repo.id)
+      const row = alreadyStored ?? (await upsertRepo({
         installationId: installation.id,
-        owner: repo.owner.login,
-        name: repo.name,
-        fullName: repo.full_name,
-        defaultBranch: repo.default_branch,
-        private: repo.private,
-        githubId: repo.id,
-      })
+        owner: chosen.repo.owner.login,
+        name: chosen.repo.name,
+        fullName: chosen.repo.full_name,
+        defaultBranch: chosen.repo.default_branch,
+        private: chosen.repo.private,
+        githubId: chosen.repo.id,
+      }))
+      if (row) await deleteOtherReposForUser(viewer, row.id)
     }
 
     const destination = new URL('/feed#repositories', url.origin)

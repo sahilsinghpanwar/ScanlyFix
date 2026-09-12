@@ -18,6 +18,7 @@ import type { RepoCategory, RepoScanScores } from '@scanlyfix/repo-checks'
 import { desc, isNotNull, isNull, relations, sql } from 'drizzle-orm'
 import {
   bigint,
+  bigserial,
   boolean,
   index,
   integer,
@@ -1069,6 +1070,120 @@ export const repoFindings = pgTable(
 
 
 
+/* -------------------------------------------------------------------------- */
+/* Deep-scan connections                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An explicit, scoped, revocable grant a user made for a DEEP scan source —
+ * the trust tier above the anonymous URL scan, where the user hands us a
+ * credential for their own infrastructure. Separate from the anonymous scan
+ * flow on purpose: a verified domain and a Supabase project are different
+ * ownership claims, and one must never silently unlock the other.
+ *
+ * The credential itself never lives here. It sits encrypted in
+ * `connection_secrets` (envelope encryption — per-record data key wrapped by a
+ * root key in the deployment's environment); this row carries only metadata
+ * and the pointer the scan route needs.
+ */
+export const connectionProviderEnum = pgEnum('connection_provider', ['supabase'])
+export const connectionStatusEnum = pgEnum('connection_status', ['active', 'revoked', 'error'])
+
+/**
+ * Storable result of one Level-1 (anon-key) Supabase check pass. Stored as a
+ * jsonb snapshot on the connection rather than a findings table because the
+ * scan is cheap, stateless and fully re-runnable — history here is display,
+ * not a diff product like repo scans. Bump `engineVersion` if a check's
+ * meaning changes, so a stored result is never displayed under new rules.
+ */
+export interface ConnectionScanFinding {
+  checkId: string
+  severity: Severity
+  title: string
+  description: string
+  evidence: Record<string, unknown> | null
+  remediation: string
+}
+
+export interface ConnectionScanResult {
+  /** ISO-8601 — jsonb has no Date type. */
+  checkedAt: string
+  engineVersion: string
+  checksRun: number
+  findings: ConnectionScanFinding[]
+  errors: Array<{ checkId: string; message: string }>
+}
+
+export const connections = pgTable(
+  'connections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: connectionProviderEnum('provider').notNull(),
+    /** The account on the provider's side — the Supabase project ref. */
+    externalAccount: text('external_account').notNull(),
+    projectUrl: text('project_url').notNull(),
+    /** What the grant allows. Level 1 today: 'anon_read'. */
+    scopes: text('scopes')
+      .array()
+      .notNull()
+      .default(['anon_read']),
+    status: connectionStatusEnum('status').notNull().default('active'),
+    lastScan: jsonb('last_scan').$type<ConnectionScanResult>(),
+    lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    // One connection per (account, provider, project). Reconnecting updates
+    // the existing grant instead of stacking rows.
+    uniqueIndex('connections_user_provider_account_idx').on(t.userId, t.provider, t.externalAccount),
+    index('connections_user_created_idx').on(t.userId, desc(t.createdAt)),
+  ],
+)
+
+/**
+ * The credential vault. One row per active connection, holding the secret
+ * under envelope encryption: `ciphertext` is the secret encrypted with a
+ * per-record data key, `encryptedDek` is that data key encrypted with the
+ * root key held in the deployment's environment. Neither is ever returned by
+ * a query path the UI can reach — only the scan route decrypts, in memory,
+ * and every decrypt is logged to `credential_access_log`.
+ */
+export const connectionSecrets = pgTable(
+  'connection_secrets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    connectionId: uuid('connection_id')
+      .notNull()
+      .references(() => connections.id, { onDelete: 'cascade' }),
+    encryptedDek: text('encrypted_dek').notNull(),
+    ciphertext: text('ciphertext').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('connection_secrets_connection_idx').on(t.connectionId)],
+)
+
+/**
+ * Audit trail for every credential decrypt — who asked, for what, when. This
+ * is the table an enterprise customer's security review asks for ("who touched
+ * our key and when"), so rows are kept with a null connection after the
+ * connection is deleted rather than cascaded away with it.
+ */
+export const credentialAccessLog = pgTable(
+  'credential_access_log',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    connectionId: uuid('connection_id').references(() => connections.id, { onDelete: 'set null' }),
+    /** What the decrypt was for — 'scan' today; 'support-debug' etc. later. */
+    purpose: text('purpose').notNull(),
+    accessedAt: timestamp('accessed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('credential_access_log_connection_idx').on(t.connectionId, desc(t.accessedAt))],
+)
+
 // ─── ADD: dns_snapshots table ─────────────────────────────────────────────────
 // WHY: Har DNS check ka snapshot store karte hain taaki next check mein
 //      compare kar sakein aur drift detect ho sake.
@@ -1349,6 +1464,21 @@ export const repoFindingsRelations = relations(repoFindings, ({ one }) => ({
   scan: one(repoScans, { fields: [repoFindings.repoScanId], references: [repoScans.id] }),
 }))
 
+export const connectionsRelations = relations(connections, ({ one }) => ({
+  user: one(users, { fields: [connections.userId], references: [users.id] }),
+  secret: one(connectionSecrets, {
+    fields: [connections.id],
+    references: [connectionSecrets.connectionId],
+  }),
+}))
+
+export const connectionSecretsRelations = relations(connectionSecrets, ({ one }) => ({
+  connection: one(connections, {
+    fields: [connectionSecrets.connectionId],
+    references: [connections.id],
+  }),
+}))
+
 // ─── 3. Relation add karo ─────────────────────────────────────────
 export const webVitalsSnapshotsRelations = relations(webVitalsSnapshots, ({ one }) => ({
   monitor: one(monitors, {
@@ -1402,6 +1532,13 @@ export type NewRepoScan = typeof repoScans.$inferInsert
 /** Persisted repo finding row. Distinct from `@scanlyfix/repo-checks`'s in-memory `RepoFinding`. */
 export type RepoFindingRow = typeof repoFindings.$inferSelect
 export type NewRepoFindingRow = typeof repoFindings.$inferInsert
+export type Connection = typeof connections.$inferSelect
+export type NewConnection = typeof connections.$inferInsert
+export type ConnectionSecret = typeof connectionSecrets.$inferSelect
+export type NewConnectionSecret = typeof connectionSecrets.$inferInsert
+/** 'supabase' today — the enum's values, so callers never retype the union. */
+export type ConnectionProvider = (typeof connectionProviderEnum.enumValues)[number]
+export type ConnectionStatus = (typeof connectionStatusEnum.enumValues)[number]
 export type Incident = typeof incidents.$inferSelect
 export type NewIncident = typeof incidents.$inferInsert
 export type IncidentUpdate = typeof incidentUpdates.$inferSelect

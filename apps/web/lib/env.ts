@@ -224,6 +224,19 @@ export const serverEnv = {
     return Boolean(process.env.RESEND_API_KEY)
   },
 
+  /**
+   * Root key for the connection credential vault (envelope encryption — see
+   * lib/credentials-vault.ts). Required only when deep-scan connections are
+   * used: the connect route refuses cleanly when it is absent rather than
+   * storing a secret under a weaker scheme. Generate with `openssl rand -base64 32`.
+   */
+  get connectionEncryptionKey() {
+    return process.env.CONNECTION_ENCRYPTION_KEY ?? ''
+  },
+  get connectionsConfigured() {
+    return Boolean(process.env.CONNECTION_ENCRYPTION_KEY)
+  },
+
   get isProduction() {
     return process.env.NODE_ENV === 'production'
   },
