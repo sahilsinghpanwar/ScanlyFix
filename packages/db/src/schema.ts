@@ -283,6 +283,17 @@ export const projects = pgTable(
     anonKeyEncrypted: text('anon_key_encrypted'),
     anonKeyFingerprint: text('anon_key_fingerprint'),
     anonKeyCheckedAt: timestamp('anon_key_checked_at', { withTimezone: true }),
+    /** Canaries — Supabase connection (encrypted at rest). */
+    supabaseUrl: text('supabase_url'),
+    supabaseServiceKeyEnc: text('supabase_service_key_enc'),
+    supabaseAnonKeyEnc: text('supabase_anon_key_enc'),
+    /** Snapshot of canary row hashes + trigger log count at last verified state. */
+    canariesSetupAt: timestamp('canaries_setup_at', { withTimezone: true }),
+    canarySnapshot: jsonb('canary_snapshot').$type<{
+      payloadHashes: Record<string, string>;
+      logRowCount: number;
+      takenAt: string;
+    }>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 
   },
@@ -1266,6 +1277,57 @@ export const runtimeModelPricing = pgTable('runtime_model_pricing', {
   entryCount: integer('entry_count').notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
 });
+
+
+
+
+
+
+// ─────────────────────────────────────────────────────────────
+// RUNTIME — CANARIES
+// ─────────────────────────────────────────────────────────────
+
+export const runtimeCanaries = pgTable(
+  'runtime_canaries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    /** 'vault' (v1 me sirf yahi) */
+    kind: text('kind').notNull().default('vault'),
+    tableName: text('table_name').notNull().default('scanlyfix_canaries'),
+    /** Vault row marker — 'CANARY::<project>::<A|B|C>' */
+    markerToken: text('marker_token').notNull(),
+    /** Honeytoken path segment — /api/runtime/honeytoken/<honeytokenPath> */
+    honeytokenPath: text('honeytoken_path').notNull(),
+    /** 'pending_script' → 'planted' → ('compromised' | 'removed') */
+    status: text('status').notNull().default('pending_script'),
+    plantedAt: timestamp('planted_at', { withTimezone: true }),
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    lastIntegrity: text('last_integrity'), // 'ok' | 'modified' | 'missing' | 'unreachable'
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('runtime_canaries_marker_uq').on(t.projectId, t.markerToken)],
+);
+
+export const runtimeCanaryEvents = pgTable(
+  'runtime_canary_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    canaryId: uuid('canary_id').references(() => runtimeCanaries.id, { onDelete: 'set null' }),
+    /** 'modified' | 'deleted' | 'anon_readable' | 'log_wiped' | 'honeytoken_hit' | 'table_missing' */
+    kind: text('kind').notNull(),
+    /** detail me KABHI user data nahi — sirf marker/action/counts */
+    detail: text('detail').notNull().default(''),
+    /** 'trigger_log' | 'integrity' | 'rls_probe' | 'honeytoken' | 'verify' */
+    source: text('source').notNull(),
+    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('runtime_canary_events_project_idx').on(t.projectId, t.detectedAt)],
+);
+
+
+
 
 
 
