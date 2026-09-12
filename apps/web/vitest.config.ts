@@ -28,6 +28,8 @@ export default defineConfig({
       // load. Mirrored here rather than rewritten to relative imports, so the
       // source keeps one import style.
       '@': fileURLToPath(new URL('.', import.meta.url)),
+      '@scanlyfix/runtime-sdk': fileURLToPath(new URL('../../packages/runtime-sdk/src/index.ts', import.meta.url)),
+      '@darvin/runtime-sdk': fileURLToPath(new URL('../../packages/runtime-sdk/src/index.ts', import.meta.url)),
     },
   },
 })

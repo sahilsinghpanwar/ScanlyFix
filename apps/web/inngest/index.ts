@@ -16,7 +16,9 @@ import { runRepoScanQueued } from './functions/run-repo-scan.ts'
 import { webVitalsProbe } from './functions/web-vitals-probe.ts'
 import { rollupWorker } from './functions/rollup-worker.ts'
 import { autoResolveStaleIncidents } from './functions/auto-resolve-stale-incidents.ts'
-import { runtimeAuthProber } from './functions/runtime-auth-prober.ts'
+import { runtimeAuthProber, runtimeAuthProberProject } from './functions/runtime-auth-prober.ts'
+import { runtimeSpendWatch } from './functions/runtime-spend-watch.ts'
+import { runtimePricingSync } from './functions/runtime-pricing-sync.ts'
 
 export const functions = [
   sweepMonitors,
@@ -30,4 +32,7 @@ export const functions = [
   rollupWorker,
   autoResolveStaleIncidents,
   runtimeAuthProber,
+  runtimeAuthProberProject,
+  runtimeSpendWatch,
+  runtimePricingSync,
 ]

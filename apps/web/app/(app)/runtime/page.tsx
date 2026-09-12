@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/console/page-header.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 import { ProberFindings } from '@/components/runtime/prober-findings.tsx'
 import { ProberControls } from './probers/prober-controls.tsx'
+import { TargetManager } from './probers/target-manager.tsx'
 
 export const metadata = { title: 'Runtime Auth Prober — ScanlyFix' }
 
@@ -113,7 +114,7 @@ export default async function RuntimePage({
           <ProjectSelector projects={projects} activeProjectId={projectId} />
         )}
 
-        {/* Subnav between Prober and Guard */}
+        {/* Subnav between Prober, Guard, and AI */}
         <div className="flex items-center gap-2 border-b border-c-line pb-3">
           <span className="rounded-lg bg-c-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm">
             Auth Prober
@@ -123,6 +124,12 @@ export default async function RuntimePage({
             className="rounded-lg px-3 py-1.5 text-xs font-medium text-c-muted transition-colors hover:text-c-ink"
           >
             Guard Routes
+          </Link>
+          <Link
+            href={`/runtime/ai?projectId=${projectId}`}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium text-c-muted transition-colors hover:text-c-ink"
+          >
+            AI Spend &amp; Logs
           </Link>
         </div>
 
@@ -140,6 +147,25 @@ export default async function RuntimePage({
                 Nightly logged-out prober monitors sensitive routes. Flags pages that previously required login
                 (401/403/30x) but now respond with 200 OK.
               </p>
+              <div className="mt-3 flex items-center gap-2 text-xs">
+                {ctx?.anonKeyFingerprint ? (
+                  <span className="inline-flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
+                    Public Supabase anon key detected (fingerprint:{' '}
+                    <code className="font-mono">{ctx.anonKeyFingerprint}</code>) — anon-role probe active
+                  </span>
+                ) : ctx?.anonKeyCheckedAt ? (
+                  <span className="inline-flex items-center gap-1.5 text-c-muted">
+                    <span className="h-1.5 w-1.5 rounded-full bg-c-line" />
+                    No public Supabase anon key detected on homepage (bare logged-out probing active)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-c-muted">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Anon-key detection pending next probe run
+                  </span>
+                )}
+              </div>
             </div>
             <div className="shrink-0 pt-2 sm:pt-0">
               <ProberControls projectId={projectId} hasBaseline={hasBaseline} targetCount={targets.length} />
@@ -161,7 +187,13 @@ export default async function RuntimePage({
             </div>
           </div>
 
-          <TargetsTable targets={targets} />
+          <TargetManager projectId={projectId} targets={targets} findings={findings} />
+
+          <p className="mt-4 border-t border-c-line/60 pt-3 text-[11px] text-c-muted">
+            * Note on dynamic routes: parameter placeholders (e.g. <code className="font-mono">[id]</code>,{' '}
+            <code className="font-mono">[slug]</code>) are probed with safe test values. Dynamic routes whose substituted ID
+            does not exist on your server return 404 (inconclusive) and produce no finding. This is by design to prevent false alarms.
+          </p>
         </section>
       </div>
     </div>
@@ -220,71 +252,6 @@ function GateCard({
       >
         {cta.label}
       </Link>
-    </div>
-  )
-}
-
-function TargetsTable({ targets }: { targets: ProberTarget[] }) {
-  if (targets.length === 0) {
-    return (
-      <p className="py-6 text-center text-sm text-c-muted">
-        No targets configured yet. Run the prober to seed standard sensitive routes.
-      </p>
-    )
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-c-line text-xs font-medium uppercase tracking-wider text-c-muted">
-            <th className="py-3 pr-4">Path</th>
-            <th className="px-4 py-3">Method</th>
-            <th className="px-4 py-3">Baseline</th>
-            <th className="px-4 py-3">Latest Status</th>
-            <th className="px-4 py-3">Source</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-c-line">
-          {targets.map((t) => {
-            const isOk =
-              t.baselineStatus !== null &&
-              t.lastActualStatus !== null &&
-              t.lastActualStatus === t.baselineStatus
-            return (
-              <tr key={t.id} className="hover:bg-c-soft/50">
-                <td className="py-3 pr-4 font-mono text-xs font-semibold text-c-ink">{t.path}</td>
-                <td className="px-4 py-3 text-xs text-c-muted">{t.method}</td>
-                <td className="px-4 py-3 text-xs">
-                  {t.baselineStatus ? (
-                    <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-mono text-xs font-medium text-c-ink">
-                      {t.baselineStatus}
-                    </span>
-                  ) : (
-                    <span className="text-c-muted">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {t.lastActualStatus ? (
-                    <span
-                      className={`inline-flex items-center rounded px-2 py-0.5 font-mono text-xs font-medium ${
-                        isOk
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                          : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                      }`}
-                    >
-                      {t.lastActualStatus}
-                    </span>
-                  ) : (
-                    <span className="text-c-muted">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs text-c-muted">{t.source}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
     </div>
   )
 }

@@ -50,8 +50,22 @@ const PRIVATE_PATHS = [
   '/scan/',
 ]
 
+function getRobotsBaseUrl(): string {
+  try {
+    return serverEnv.appUrl
+  } catch {
+    const raw =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+      'https://scanlyfix.com'
+    return raw.replace(/\/+$/, '')
+  }
+}
+
 export default function robots(): MetadataRoute.Robots {
-  const base = serverEnv.appUrl
+  const base = getRobotsBaseUrl()
 
   return {
     rules: [{ userAgent: '*', allow: '/', disallow: PRIVATE_PATHS }],

@@ -69,7 +69,7 @@ export default async function GuardPage({
 
   const view: GuardRouteView[] = routes.map((r) => ({
     ...r,
-    needsSession: computeNeedsSession(r.withSession, r.withoutSession),
+    needsSession: computeNeedsSession(r.withSession, r.withoutSession, r.source),
   }));
 
   return (
@@ -81,7 +81,7 @@ export default async function GuardPage({
           <ProjectSelector projects={projects} activeProjectId={projectId} />
         )}
 
-        {/* Subnav between Prober and Guard */}
+        {/* Subnav between Prober, Guard, and AI */}
         <div className="flex items-center gap-2 border-b border-c-line pb-3">
           <Link
             href={`/runtime?projectId=${projectId}`}
@@ -92,6 +92,12 @@ export default async function GuardPage({
           <span className="rounded-lg bg-c-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm">
             Guard Routes
           </span>
+          <Link
+            href={`/runtime/ai?projectId=${projectId}`}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium text-c-muted transition-colors hover:text-c-ink"
+          >
+            AI Spend &amp; Logs
+          </Link>
         </div>
 
         {/* Feature Header */}

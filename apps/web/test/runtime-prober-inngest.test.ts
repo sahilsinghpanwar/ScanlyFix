@@ -20,27 +20,47 @@ vi.mock('../lib/email.ts', () => ({
   sendEmail: (...args: unknown[]) => sendEmailMock(...args),
 }));
 
+const syncGuardRoutesToProberMock = vi.fn().mockResolvedValue({ synced: 2, candidates: 5 });
+vi.mock('../lib/runtime/guard/sync.ts', () => ({
+  syncGuardRoutesToProber: (...args: unknown[]) => syncGuardRoutesToProberMock(...args),
+}));
+
 type InngestHandler = (ctx: {
-  step: { run: (name: string, fn: () => unknown) => Promise<unknown> };
+  event?: { data: Record<string, unknown> };
+  step: {
+    run: (name: string, fn: () => unknown) => Promise<unknown>;
+    sendEvent: (name: string, events: unknown[]) => Promise<unknown>;
+    sleepUntil: (name: string, date: Date | string) => Promise<unknown>;
+  };
   logger: { info: Mock; warn: Mock; error: Mock };
 }) => Promise<unknown>;
 
-let registeredHandler: InngestHandler | null = null;
+const registeredFunctions = new Map<string, InngestHandler>();
+
 vi.mock('../lib/inngest.ts', () => ({
+  EVENTS: {
+    authProberRunProject: 'runtime/auth-prober.run-project',
+  },
   inngest: {
-    createFunction: (_config: unknown, handler: InngestHandler) => {
-      registeredHandler = handler;
-      return { __handler: handler };
+    createFunction: (config: { id: string }, handler: InngestHandler) => {
+      registeredFunctions.set(config.id, handler);
+      return { config, __handler: handler };
     },
   },
 }));
 
-await import('../inngest/functions/runtime-auth-prober.ts');
+const {
+  calculateProberJitterMinutes,
+  calculateProberSleepUntil,
+} = await import('../inngest/functions/runtime-auth-prober.ts');
 
-function makeContext() {
+function makeContext(eventData: Record<string, unknown> = {}) {
   return {
+    event: { data: eventData },
     step: {
       run: vi.fn(async (_name: string, fn: () => unknown) => fn()),
+      sendEvent: vi.fn(async () => ({ ids: ['evt_1'] })),
+      sleepUntil: vi.fn(async () => undefined),
     },
     logger: {
       info: vi.fn(),
@@ -50,7 +70,7 @@ function makeContext() {
   };
 }
 
-describe('runtime auth prober Inngest nightly cron', () => {
+describe('runtime auth prober Inngest fan-out & jitter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -59,77 +79,149 @@ describe('runtime auth prober Inngest nightly cron', () => {
     vi.restoreAllMocks();
   });
 
-  it('runs cleanly when no projects are eligible', async () => {
-    listProberEligibleProjectIdsMock.mockResolvedValueOnce([]);
+  describe('deterministic jitter function', () => {
+    it('is strictly deterministic: returns identical slot for same projectId', () => {
+      const pid = '00000000-0000-0000-0000-000000000001';
+      const slot1 = calculateProberJitterMinutes(pid);
+      const slot2 = calculateProberJitterMinutes(pid);
+      const slot3 = calculateProberJitterMinutes(pid);
 
-    const ctx = makeContext();
-    const result = await registeredHandler!(ctx as never);
-
-    expect(result).toEqual({ runs: [] });
-    expect(runAuthProberMock).not.toHaveBeenCalled();
-    expect(ctx.logger.info).toHaveBeenCalledWith('auth-prober: eligible projects', { count: 0 });
-  });
-
-  it('probes eligible projects and records summary', async () => {
-    listProberEligibleProjectIdsMock.mockResolvedValueOnce(['proj_1', 'proj_2']);
-    runAuthProberMock.mockResolvedValue({
-      projectId: 'proj_1',
-      ranAt: new Date().toISOString(),
-      baselinesRecorded: 0,
-      checked: 10,
-      newFindings: 0,
-      autoResolved: 0,
-      stillOpen: 0,
-      errors: 0,
+      expect(slot1).toBe(slot2);
+      expect(slot2).toBe(slot3);
     });
 
-    const ctx = makeContext();
-    const result = (await registeredHandler!(ctx as never)) as { runs: string[] };
+    it('returns integers strictly within [0, 60) for arbitrary project IDs', () => {
+      const testIds = [
+        'proj_alpha',
+        'proj_beta',
+        '7da18d35-9904-4905-82ea-65da4e719814',
+        'c0a80101-0000-0000-0000-000000000000',
+        'ffffffff-ffff-ffff-ffff-ffffffffffff',
+        'short-id',
+        '',
+      ];
 
-    expect(runAuthProberMock).toHaveBeenCalledTimes(2);
-    expect(result.runs).toHaveLength(2);
-    expect(result.runs[0]).toContain('proj_1 → baseline:0 checked:10 new:0 resolved:0 open:0 err:0');
-  });
-
-  it('triggers email alert on new findings via onNewFindings hook', async () => {
-    listProberEligibleProjectIdsMock.mockResolvedValueOnce(['proj_1']);
-    getProjectOwnerEmailMock.mockResolvedValueOnce('founder@example.com');
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'app.example.com',
-      isVerified: true,
+      for (const id of testIds) {
+        const slot = calculateProberJitterMinutes(id);
+        expect(Number.isInteger(slot)).toBe(true);
+        expect(slot).toBeGreaterThanOrEqual(0);
+        expect(slot).toBeLessThan(60);
+      }
     });
 
-    runAuthProberMock.mockImplementationOnce(async (projectId, hooks) => {
-      await hooks.onNewFindings?.([
-        {
-          path: '/admin',
-          severity: 'critical',
-          baselineStatus: 403,
-          actualStatus: 200,
-        },
+    it('distributes slots across different project IDs', () => {
+      const slots = new Set<number>();
+      for (let i = 0; i < 50; i++) {
+        slots.add(calculateProberJitterMinutes(`project-uuid-${i}`));
+      }
+      // Across 50 projects, there should be substantial variation (more than 15 distinct slots)
+      expect(slots.size).toBeGreaterThan(15);
+    });
+
+    it('calculateProberSleepUntil returns a Date offset by the jitter minutes', () => {
+      const base = new Date('2026-09-13T02:00:00.000Z');
+      const pid = 'proj_test_jitter';
+      const expectedMinutes = calculateProberJitterMinutes(pid);
+
+      const targetDate = calculateProberSleepUntil(pid, base);
+      const diffMs = targetDate.getTime() - base.getTime();
+      expect(diffMs).toBe(expectedMinutes * 60 * 1000);
+    });
+  });
+
+  describe('parent cron function: runtime/auth-prober-nightly', () => {
+    it('runs cleanly and dispatches 0 events when no projects are eligible', async () => {
+      listProberEligibleProjectIdsMock.mockResolvedValueOnce([]);
+
+      const handler = registeredFunctions.get('runtime/auth-prober-nightly');
+      expect(handler).toBeDefined();
+
+      const ctx = makeContext();
+      const result = await handler!(ctx as never);
+
+      expect(result).toEqual({ eligibleCount: 0, dispatched: 0 });
+      expect(ctx.step.sendEvent).not.toHaveBeenCalled();
+      expect(ctx.logger.info).toHaveBeenCalledWith('auth-prober: eligible projects', { count: 0 });
+    });
+
+    it('fans out per-project events via step.sendEvent for all eligible projects', async () => {
+      listProberEligibleProjectIdsMock.mockResolvedValueOnce(['proj_1', 'proj_2', 'proj_3']);
+
+      const handler = registeredFunctions.get('runtime/auth-prober-nightly');
+      expect(handler).toBeDefined();
+
+      const ctx = makeContext();
+      const result = await handler!(ctx as never);
+
+      expect(result).toEqual({ eligibleCount: 3, dispatched: 3 });
+      expect(ctx.step.sendEvent).toHaveBeenCalledWith('fan-out-prober-runs', [
+        { name: 'runtime/auth-prober.run-project', data: { projectId: 'proj_1' } },
+        { name: 'runtime/auth-prober.run-project', data: { projectId: 'proj_2' } },
+        { name: 'runtime/auth-prober.run-project', data: { projectId: 'proj_3' } },
       ]);
-      return {
-        projectId,
-        ranAt: new Date().toISOString(),
-        baselinesRecorded: 0,
-        checked: 5,
-        newFindings: 1,
-        autoResolved: 0,
-        stillOpen: 0,
-        errors: 0,
-      };
     });
+  });
 
-    const ctx = makeContext();
-    await registeredHandler!(ctx as never);
+  describe('child worker function: runtime/auth-prober-project', () => {
+    it('executes jitter sleep, syncs guard routes, runs prober, and alerts on findings', async () => {
+      const handler = registeredFunctions.get('runtime/auth-prober-project');
+      expect(handler).toBeDefined();
 
-    expect(sendEmailMock).toHaveBeenCalledTimes(1);
-    expect(sendEmailMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'founder@example.com',
-        subject: expect.stringContaining('app.example.com'),
-      }),
-    );
+      getProjectOwnerEmailMock.mockResolvedValueOnce('owner@example.com');
+      getRuntimeProjectContextMock.mockResolvedValueOnce({
+        id: 'proj_1',
+        hostname: 'saas.example.com',
+        isVerified: true,
+      });
+
+      runAuthProberMock.mockImplementationOnce(async (projectId, hooks) => {
+        await hooks.onNewFindings?.([
+          {
+            path: '/admin',
+            severity: 'critical',
+            baselineStatus: 403,
+            actualStatus: 200,
+          },
+        ]);
+        return {
+          projectId,
+          ranAt: new Date().toISOString(),
+          baselinesRecorded: 0,
+          checked: 5,
+          newFindings: 1,
+          autoResolved: 0,
+          stillOpen: 0,
+          errors: 0,
+        };
+      });
+
+      const ctx = makeContext({ projectId: 'proj_1' });
+      const result = await handler!(ctx as never);
+
+      // 1. Jitter sleep called
+      expect(ctx.step.sleepUntil).toHaveBeenCalledWith(
+        'jitter-sleep',
+        expect.any(Date),
+      );
+
+      // 2. Guard sync called
+      expect(syncGuardRoutesToProberMock).toHaveBeenCalledWith('proj_1');
+
+      // 3. Prober run called
+      expect(runAuthProberMock).toHaveBeenCalledWith('proj_1', expect.any(Object));
+
+      // 4. Alert email sent
+      expect(sendEmailMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'owner@example.com',
+          subject: expect.stringContaining('saas.example.com'),
+        }),
+      );
+
+      expect(result).toMatchObject({
+        projectId: 'proj_1',
+        summary: expect.objectContaining({ checked: 5, newFindings: 1 }),
+      });
+    });
   });
 });

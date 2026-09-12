@@ -96,8 +96,57 @@
     {
       "idx": 13,
       "version": "7",
-      "when": 1789061552571,
-      "tag": "0013_mixed_gamora",
+      "when": 1789073752466,
+      "tag": "0013_material_jigsaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789214831000,
+      "tag": "0014_runtime_signing_secret",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789214832000,
+      "tag": "0015_runtime_ai_calls_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789214833000,
+      "tag": "0016_runtime_model_pricing",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789214834000,
+      "tag": "0017_runtime_routes_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789214835000,
+      "tag": "0018_runtime_secret_rotation_grace",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789214836000,
+      "tag": "0019_prober_anon_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789214837000,
+      "tag": "0020_normalize_prober_targets_get",
       "breakpoints": true
     }
   ]

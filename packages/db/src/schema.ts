@@ -266,7 +266,26 @@ export const projects = pgTable(
     logoUrl: text('logo_url'),
     brandColor: text('brand_color'),
     robotsIndexable: boolean('robots_indexable').notNull().default(true),
+    runtimeSpendCeilingMicroUsd: bigint('runtime_spend_ceiling_micro_usd', { mode: 'number' }),
+    /**
+     * Per-project signing secret for the Runtime SDK ingest endpoint.
+     *
+     * The SDK sends this in `x-runtime-signature`; the ingest route validates
+     * it per-project using constant-time comparison. Each project gets its own
+     * secret so a leaked key for one project cannot poison another.
+     *
+     * Nullable — existing projects have null until the owner opens the Guard
+     * setup card, which calls getOrCreateRuntimeSecret() to generate one.
+     * Generate via: randomBytes(32).toString('hex')   → 64-char hex string.
+     */
+    runtimeSigningSecret: text('runtime_signing_secret'),
+    runtimeIngestSecretPrev: text('runtime_ingest_secret_prev'),
+    runtimeSecretRotatedAt: timestamp('runtime_secret_rotated_at', { withTimezone: true }),
+    anonKeyEncrypted: text('anon_key_encrypted'),
+    anonKeyFingerprint: text('anon_key_fingerprint'),
+    anonKeyCheckedAt: timestamp('anon_key_checked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+
   },
   (t) => [index('projects_owner_idx').on(t.ownerId), index('projects_org_idx').on(t.orgId)],
 )
@@ -1260,6 +1279,10 @@ export const runtimeProberFindings = pgTable(
     actualStatus: integer('actual_status').notNull(),
     /** 'critical' = sensitive path (/admin, /api/*) · 'high' = baaki */
     severity: text('severity').notNull().default('high'),
+    /** 'anon_role' = opens with public Supabase anon key · null = bare logged-out bypass */
+    variant: text('variant'),
+    /** First 16 hex chars of key SHA-256 for display */
+    keyFingerprint: text('key_fingerprint'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1278,6 +1301,7 @@ export const runtimeRoutes = pgTable(
     pattern: text('pattern').notNull(),
     method: text('method').notNull(),
     kind: text('kind').notNull().default('route'), // 'route' | 'server_action'
+    source: text('source'), // 'sample' | null
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1297,6 +1321,66 @@ export const runtimeRouteStats = pgTable(
 );
 
 
+
+/* -------------------------------------------------------------------------- */
+/* Runtime AI Logs & Spend                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Raw telemetry events recorded from AI provider calls (OpenAI, Anthropic, etc.).
+ * Zero-proxy policy: secret keys never leave the caller's server; only metadata
+ * (model, tokens, latency, cost) is ingested.
+ */
+export const runtimeAiCalls = pgTable(
+  'runtime_ai_calls',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    promptTokens: integer('prompt_tokens').notNull().default(0),
+    completionTokens: integer('completion_tokens').notNull().default(0),
+    latencyMs: integer('latency_ms').notNull().default(0),
+    costMicroUsd: bigint('cost_micro_usd', { mode: 'number' }).notNull().default(0),
+    userHash: text('user_hash'),
+    /** Source of the telemetry event: 'sample' for simulated test events, null for live SDK calls. */
+    source: text('source'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('runtime_ai_calls_project_created_idx').on(t.projectId, t.createdAt)],
+);
+
+/** Velocity-alert hourly dedupe — unique(project, hour) = ek hour, ek email. */
+export const runtimeSpendAlerts = pgTable(
+  'runtime_spend_alerts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    spentMicroUsd: bigint('spent_micro_usd', { mode: 'number' }).notNull(),
+    projectedMicroUsd: bigint('projected_micro_usd', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('runtime_spend_alerts_uq').on(t.projectId, t.hour)],
+);
+
+export type CatalogEntry = {
+  model: string;
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+};
+
+/**
+ * LiteLLM pricing catalog cached in PostgreSQL.
+ * Synchronized weekly via Inngest cron to provide comprehensive pricing coverage
+ * beyond our curated flagship models.
+ */
+export const runtimeModelPricing = pgTable('runtime_model_pricing', {
+  id: text('id').primaryKey(), // always 'litellm'
+  catalog: jsonb('catalog').$type<CatalogEntry[]>().notNull(),
+  entryCount: integer('entry_count').notNull(),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
+});
 
 
 
@@ -1333,6 +1417,8 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   alerts: many(alerts),
   alertChannels: many(alertChannels),
   statusSubscribers: many(statusSubscribers),
+  aiCalls: many(runtimeAiCalls),
+  spendAlerts: many(runtimeSpendAlerts),
 }))
 
 export const scansRelations = relations(scans, ({ one, many }) => ({
@@ -1487,6 +1573,20 @@ export const webVitalsSnapshotsRelations = relations(webVitalsSnapshots, ({ one 
   }),
 }))
 
+export const runtimeAiCallsRelations = relations(runtimeAiCalls, ({ one }) => ({
+  project: one(projects, {
+    fields: [runtimeAiCalls.projectId],
+    references: [projects.id],
+  }),
+}))
+
+export const runtimeSpendAlertsRelations = relations(runtimeSpendAlerts, ({ one }) => ({
+  project: one(projects, {
+    fields: [runtimeSpendAlerts.projectId],
+    references: [projects.id],
+  }),
+}))
+
 /* -------------------------------------------------------------------------- */
 /* Inferred row types — import these instead of hand-writing DTOs.            */
 /* -------------------------------------------------------------------------- */
@@ -1545,7 +1645,6 @@ export type IncidentUpdate = typeof incidentUpdates.$inferSelect
 export type NewIncidentUpdate = typeof incidentUpdates.$inferInsert
 export type StatusSubscriber = typeof statusSubscribers.$inferSelect
 export type NewStatusSubscriber = typeof statusSubscribers.$inferInsert
-export const MaintenanceWindow = typeof maintenanceWindows.$inferSelect
 export type MaintenanceWindow = typeof maintenanceWindows.$inferSelect
 export type NewMaintenanceWindow = typeof maintenanceWindows.$inferInsert
 export type DnsSnapshot = typeof dnsSnapshots.$inferSelect
@@ -1554,4 +1653,11 @@ export type WebVitalsSnapshot = typeof webVitalsSnapshots.$inferSelect
 export type NewWebVitalsSnapshot = typeof webVitalsSnapshots.$inferInsert
 export type SnoozedMonitor = typeof snoozedMonitors.$inferSelect
 export type NewSnoozedMonitor = typeof snoozedMonitors.$inferInsert
+export type RuntimeAiCall = typeof runtimeAiCalls.$inferSelect
+export type NewRuntimeAiCall = typeof runtimeAiCalls.$inferInsert
+export type RuntimeSpendAlert = typeof runtimeSpendAlerts.$inferSelect
+export type NewRuntimeSpendAlert = typeof runtimeSpendAlerts.$inferInsert
+export type RuntimeModelPricing = typeof runtimeModelPricing.$inferSelect
+export type NewRuntimeModelPricing = typeof runtimeModelPricing.$inferInsert
+
  

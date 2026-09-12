@@ -15,7 +15,7 @@ const nextConfig: NextConfig = {
    * and import each other with explicit `.ts` extensions, so Next has to compile
    * them rather than treat them as prebuilt dependencies.
    */
-  transpilePackages: ['@scanlyfix/checks', '@scanlyfix/db'],
+  transpilePackages: ['@scanlyfix/checks', '@scanlyfix/db', '@scanlyfix/runtime-sdk'],
 
   /**
    * The dev-tools badge (the "N" button that floats in the page's corner
