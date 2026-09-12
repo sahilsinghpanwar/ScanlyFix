@@ -35,17 +35,9 @@ export async function runCanaryCheck(projectId: string): Promise<CanaryRunSummar
 
   // 1) Integrity — canary rows + trigger log
   const rowsRes = await restSelect<{ marker: string; payload: unknown }>(rest, CANARY_TABLE, { query: 'select=marker,payload' });
-  const logRes = await restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id', withCount: true });
 
-  if (!rowsRes.ok && rowsRes.status === 404) {
-    // Vault table hi nahi — user ne script revert/remove ki ya galat project connect hua
-    summary.detections.push({
-      kind: 'table_missing', source: 'integrity', canaryId: null,
-      detail: `${CANARY_TABLE} table Supabase me nahi mili — setup hata gaya ya connection galat hai`,
-    });
-  } else if (!rowsRes.ok && rowsRes.status === 0) {
-    // Unreachable — alarm nahi (app/server down ≠ breach)
-  } else {
+  if (rowsRes.ok && rowsRes.data) {
+    const logRes = await restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id', withCount: true });
     summary.reachable = true;
     const result = evaluateIntegrity({
       snapshot: cfg.snapshot,
@@ -69,10 +61,25 @@ export async function runCanaryCheck(projectId: string): Promise<CanaryRunSummar
       }
     }
     summary.detections.push(...result.detections);
+  } else if (rowsRes.status === 404) {
+    // Vault table hi nahi — user ne script revert/remove ki ya galat project connect hua
+    summary.detections.push({
+      kind: 'table_missing', source: 'integrity', canaryId: null,
+      detail: `${CANARY_TABLE} table Supabase me nahi mili — setup hata gaya ya connection galat hai`,
+    });
+  } else {
+    // 401/403/5xx/timeout → summary.reachable = false, NO integrity evaluation, NO detections, NO snapshot refresh.
+    // Set lastIntegrity='unreachable' on canary rows so the UI can show a neutral status.
+    summary.reachable = false;
+    const canaries = await listCanaries(projectId);
+    for (const c of canaries) {
+      summary.integrity[c.markerToken] = 'unreachable';
+      await updateCanaryStatus(projectId, c.markerToken, c.status, 'unreachable');
+    }
   }
 
   // 2) RLS probe — anon key se vault padhne ki KOSHISH (deterministic read-check)
-  if (cfg.anonKey) {
+  if (cfg.anonKey && summary.reachable) {
     const probe: AnonProbeResult = await restSelect<unknown>(rest, CANARY_TABLE, { key: 'anon', limit: 1 }).then((r) => ({
       status: r.status,
       rowCount: r.data?.length ?? (r.status === 200 ? 0 : null),
