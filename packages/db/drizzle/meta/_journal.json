@@ -148,6 +148,13 @@
       "when": 1789214837000,
       "tag": "0020_normalize_prober_targets_get",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789214838000,
+      "tag": "0021_runtime_canaries",
+      "breakpoints": true
     }
   ]
 }

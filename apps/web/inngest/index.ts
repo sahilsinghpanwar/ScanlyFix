@@ -19,6 +19,7 @@ import { autoResolveStaleIncidents } from './functions/auto-resolve-stale-incide
 import { runtimeAuthProber, runtimeAuthProberProject } from './functions/runtime-auth-prober.ts'
 import { runtimeSpendWatch } from './functions/runtime-spend-watch.ts'
 import { runtimePricingSync } from './functions/runtime-pricing-sync.ts'
+import { runtimeCanaryCheck } from './functions/runtime-canary-check.ts'
 
 export const functions = [
   sweepMonitors,
@@ -35,4 +36,5 @@ export const functions = [
   runtimeAuthProberProject,
   runtimeSpendWatch,
   runtimePricingSync,
+  runtimeCanaryCheck,
 ]
