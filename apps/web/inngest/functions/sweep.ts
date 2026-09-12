@@ -19,10 +19,26 @@
  *   we do NOT reset the lease on probe failure.
  */
 
-import { claimDueMonitors } from '@scanlyfix/db'
+import { claimDueMonitors, purgeOldAiCallsBatch, purgeExpiredRuntimeSecrets } from '@scanlyfix/db'
 import { inngest, EVENTS } from '@/lib/inngest.ts'
 
 const BATCH_SIZE = 500
+
+/**
+ * Pure function: calculates the retention cutoff date.
+ * Any records created before this cutoff are older than the retention window (default: 90 days).
+ */
+export function retentionCutoff(now: Date = new Date(), days = 90): Date {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+}
+
+/**
+ * Checks if the daily retention sweep should execute for the current sweep invocation.
+ * Scheduled once daily at 03:00 UTC during the minute-level monitor sweep.
+ */
+export function isDailyRetentionDue(now: Date = new Date()): boolean {
+  return now.getUTCHours() === 3 && now.getUTCMinutes() === 0
+}
 
 /**
  * Every minute. The minimum useful uptime resolution, and each monitor's own
@@ -63,6 +79,24 @@ export const sweepMonitors = inngest.createFunction(
       if (claimed.length < BATCH_SIZE) break
     }
 
-    return { dispatched: totalDispatched }
+    // Daily retention step: delete runtime_ai_calls older than 90 days
+    // and purge expired runtime signing secrets (rotated > 24h ago).
+    // Batch size 10,000 in a loop inside purgeOldAiCallsBatch to avoid holding locks
+    let aiCallsPurged = 0
+    let expiredSecretsPurged = 0
+    const now = new Date()
+    if (isDailyRetentionDue(now)) {
+      aiCallsPurged = await step.run('purge-expired-ai-calls', async () => {
+        const cutoff = retentionCutoff(now, 90)
+        return purgeOldAiCallsBatch(cutoff, 10_000)
+      })
+
+      expiredSecretsPurged = await step.run('purge-expired-runtime-secrets', async () => {
+        const graceCutoff = new Date(now.getTime() - 24 * 3600_000)
+        return purgeExpiredRuntimeSecrets(graceCutoff)
+      })
+    }
+
+    return { dispatched: totalDispatched, aiCallsPurged, expiredSecretsPurged }
   },
 )

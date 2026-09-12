@@ -1,9 +1,8 @@
 export type TargetSource = 'default' | 'guard' | 'manual';
 export type FindingSeverity = 'critical' | 'high';
 
-/** v1: sirf logged-out probe. 'anon_key' variant ka hook ready hai
- *  (jaisa "public key from your browser bundle") — Phase 2 me. */
-export type ProbeVariant = 'logged_out';
+export type ProbeVariant = 'logged_out' | 'anon_role';
+export type FindingVariant = 'anon_role' | null;
 
 export type ProbeOutcome =
   | { ok: true; status: number }
@@ -14,8 +13,18 @@ export type TargetVerdict =
   | { verdict: 'baseline_recorded'; status: number }
   | { verdict: 'protected'; status: number }
   | { verdict: 'open'; status: number; severity: FindingSeverity }
+  | { verdict: 'anon_open'; status: number; anonStatus: number; severity: FindingSeverity }
   | { verdict: 'inconclusive'; status: number }
   | { verdict: 'error'; error: string };
+
+export type ProberFindingItem = {
+  path: string;
+  severity: FindingSeverity;
+  baselineStatus: number;
+  actualStatus: number;
+  variant?: 'anon_role' | null;
+  keyFingerprint?: string | null;
+};
 
 export type ProberRunSummary = {
   projectId: string;

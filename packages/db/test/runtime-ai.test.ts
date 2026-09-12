@@ -4,8 +4,16 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const mockValues = vi.fn();
 const mockReturning = vi.fn();
 const mockOnConflictDoNothing = vi.fn();
+const mockOnConflictDoUpdate = vi.fn();
 const mockInsert = vi.fn(() => ({
-  values: mockValues,
+  values: (...args: unknown[]) => {
+    mockValues(...args);
+    return {
+      returning: mockReturning,
+      onConflictDoNothing: mockOnConflictDoNothing,
+      onConflictDoUpdate: mockOnConflictDoUpdate,
+    };
+  },
 }));
 const mockUpdateSet = vi.fn();
 const mockUpdateWhere = vi.fn();
@@ -19,11 +27,14 @@ const mockSelectWhere = vi.fn();
 const mockSelectFrom = vi.fn();
 const mockSelect = vi.fn();
 
+const mockExecute = vi.fn();
+
 vi.mock('../src/client.ts', () => ({
   db: {
     insert: (...args: unknown[]) => mockInsert(...args),
     update: (...args: unknown[]) => mockUpdate(...args),
     select: (...args: unknown[]) => mockSelect(...args),
+    execute: (...args: unknown[]) => mockExecute(...args),
   },
 }));
 
@@ -35,6 +46,10 @@ import {
   setSpendCeiling,
   claimSpendAlertHour,
   listSpendWatchProjectIds,
+  purgeOldAiCallsBatch,
+  getModelPricingCatalog,
+  upsertModelPricingCatalog,
+  getSpendHourlyBuckets,
 } from '../src/queries/runtime-ai.ts';
 
 describe('packages/db runtime-ai queries', () => {
@@ -83,6 +98,7 @@ describe('packages/db runtime-ai queries', () => {
           latencyMs: 121,
           costMicroUsd: 46,
           userHash: 'hash-abc',
+          source: null,
         },
         {
           projectId: 'proj-1',
@@ -93,7 +109,31 @@ describe('packages/db runtime-ai queries', () => {
           latencyMs: 0,
           costMicroUsd: 0,
           userHash: null,
+          source: null,
         },
+      ]);
+    });
+
+    it('records events with source=sample for test calls', async () => {
+      mockReturning.mockResolvedValueOnce([{ id: 'uuid-sample' }]);
+      mockValues.mockReturnValueOnce({ returning: mockReturning });
+
+      await recordAiCallEvents('proj-1', [
+        {
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          promptTokens: 100,
+          completionTokens: 50,
+          costMicroUsd: 45,
+          source: 'sample',
+        },
+      ]);
+
+      expect(mockValues).toHaveBeenCalledWith([
+        expect.objectContaining({
+          projectId: 'proj-1',
+          source: 'sample',
+        }),
       ]);
     });
   });
@@ -207,6 +247,127 @@ describe('packages/db runtime-ai queries', () => {
 
       const ids = await listSpendWatchProjectIds();
       expect(ids).toEqual(['p1', 'p2']);
+    });
+  });
+
+  describe('purgeOldAiCallsBatch', () => {
+    it('deletes rows in batch and stops if count < batchSize', async () => {
+      mockExecute.mockResolvedValueOnce({ rowCount: 150 });
+
+      const cutoff = new Date('2025-01-01T00:00:00Z');
+      const total = await purgeOldAiCallsBatch(cutoff, 1000);
+
+      expect(total).toBe(150);
+      expect(mockExecute).toHaveBeenCalledTimes(1);
+    });
+
+    it('loops until a batch returns fewer rows than batchSize', async () => {
+      // First iteration deletes 10_000, second deletes 4_200 (< 10_000, stops)
+      mockExecute
+        .mockResolvedValueOnce({ rowCount: 10_000 })
+        .mockResolvedValueOnce({ rowCount: 4_200 });
+
+      const cutoff = new Date('2025-01-01T00:00:00Z');
+      const total = await purgeOldAiCallsBatch(cutoff, 10_000);
+
+      expect(total).toBe(14_200);
+      expect(mockExecute).toHaveBeenCalledTimes(2);
+    });
+
+    it('handles zero deleted rows cleanly', async () => {
+      mockExecute.mockResolvedValueOnce({ rowCount: 0 });
+
+      const cutoff = new Date('2025-01-01T00:00:00Z');
+      const total = await purgeOldAiCallsBatch(cutoff, 10_000);
+
+      expect(total).toBe(0);
+      expect(mockExecute).toHaveBeenCalledTimes(1);
+    });
+
+    it('handles array returns from mock/driver', async () => {
+      mockExecute.mockResolvedValueOnce([{ id: 'row-1' }, { id: 'row-2' }]);
+
+      const cutoff = new Date('2025-01-01T00:00:00Z');
+      const total = await purgeOldAiCallsBatch(cutoff, 100);
+
+      expect(total).toBe(2);
+    });
+  });
+
+  describe('getModelPricingCatalog & upsertModelPricingCatalog', () => {
+    it('returns catalog array when row exists', async () => {
+      const mockCatalog = [{ model: 'gpt-4o', inputUsdPerMillion: 2.5, outputUsdPerMillion: 10 }];
+      mockSelectLimit.mockResolvedValueOnce([{ catalog: mockCatalog }]);
+      mockSelectWhere.mockReturnValueOnce({ limit: mockSelectLimit });
+      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
+      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
+
+      const res = await getModelPricingCatalog();
+      expect(res).toEqual(mockCatalog);
+    });
+
+    it('returns null when no catalog row exists', async () => {
+      mockSelectLimit.mockResolvedValueOnce([]);
+      mockSelectWhere.mockReturnValueOnce({ limit: mockSelectLimit });
+      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
+      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
+
+      const res = await getModelPricingCatalog();
+      expect(res).toBeNull();
+    });
+
+    it('upsertModelPricingCatalog performs onConflictDoUpdate on id=litellm', async () => {
+      mockOnConflictDoUpdate.mockResolvedValueOnce(undefined);
+      const catalog = [{ model: 'claude-3-opus', inputUsdPerMillion: 15, outputUsdPerMillion: 75 }];
+      const date = new Date('2026-09-12T00:00:00Z');
+
+      await upsertModelPricingCatalog(catalog, date);
+
+      expect(mockValues).toHaveBeenCalledWith({
+        id: 'litellm',
+        catalog,
+        entryCount: 1,
+        fetchedAt: date,
+      });
+      expect(mockOnConflictDoUpdate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getSpendHourlyBuckets', () => {
+    it('returns exactly 24 continuous hourly buckets, mapping DB results and zeroing gaps', async () => {
+      const fixedNow = new Date('2026-09-12T15:30:00Z');
+      const activeHour = new Date('2026-09-12T12:00:00Z').toISOString();
+
+      mockSelectGroupBy.mockResolvedValueOnce([
+        {
+          bucketHour: activeHour,
+          calls: '5',
+          costMicroUsd: '250000',
+        },
+      ]);
+      mockSelectWhere.mockReturnValueOnce({ groupBy: mockSelectGroupBy });
+      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
+      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
+
+      const buckets = await getSpendHourlyBuckets('p-buckets', 24, fixedNow);
+
+      expect(buckets).toHaveLength(24);
+
+      // Chronological order: first bucket should be 23 hours before current hour (15:00 - 23h = yesterday 16:00)
+      expect(buckets[0].hour).toBe(new Date('2026-09-11T16:00:00Z').toISOString());
+      // Last bucket should be the current hour (15:00)
+      expect(buckets[23].hour).toBe(new Date('2026-09-12T15:00:00Z').toISOString());
+
+      // Active hour should have the aggregated data
+      const active = buckets.find((b) => b.hour === activeHour);
+      expect(active).toBeDefined();
+      expect(active?.costMicroUsd).toBe(250_000);
+      expect(active?.calls).toBe(5);
+
+      // Inactive hour should have 0
+      const inactive = buckets.find((b) => b.hour !== activeHour);
+      expect(inactive?.costMicroUsd).toBe(0);
+      expect(inactive?.calls).toBe(0);
     });
   });
 });

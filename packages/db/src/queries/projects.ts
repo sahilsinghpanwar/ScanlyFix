@@ -7,7 +7,7 @@
  * convenience layer over it.
  */
 
-import { and, count, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, count, desc, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { db } from '../client.ts'
 import {
@@ -599,15 +599,98 @@ export async function getOrCreateRuntimeSecret(projectId: string): Promise<strin
  *
  * Authorization: caller must verify viewer ownership before calling this.
  */
-export async function rotateRuntimeSecret(projectId: string, viewer: Viewer): Promise<string | null> {
+export async function rotateRuntimeSecret(
+  projectId: string,
+  viewer: Viewer,
+  now: Date = new Date(),
+): Promise<string | null> {
   if (!(await getProject(projectId, viewer))) return null
 
   const secret = randomBytes(32).toString('hex')
   await db
     .update(projects)
-    .set({ runtimeSigningSecret: secret })
+    .set({
+      runtimeIngestSecretPrev: projects.runtimeSigningSecret,
+      runtimeSigningSecret: secret,
+      runtimeSecretRotatedAt: now,
+    })
     .where(eq(projects.id, projectId))
   return secret
+}
+
+export const SECRET_ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export type ProjectRuntimeAuthSecrets = {
+  current: string | null;
+  prev: string | null;
+  rotatedAt: Date | null;
+  validSecrets: string[];
+};
+
+/**
+ * Returns all active signing secrets for a project that are currently valid for ingest.
+ * If rotation occurred within the last 24h (SECRET_ROTATION_GRACE_MS), both the current
+ * secret and previous secret are valid.
+ * After 24h, only the current secret is valid.
+ */
+export async function getProjectRuntimeAuthSecrets(
+  projectId: string,
+  now: Date = new Date(),
+): Promise<ProjectRuntimeAuthSecrets> {
+  const [row] = await db
+    .select({
+      current: projects.runtimeSigningSecret,
+      prev: projects.runtimeIngestSecretPrev,
+      rotatedAt: projects.runtimeSecretRotatedAt,
+    })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  if (!row || !row.current) {
+    return { current: null, prev: null, rotatedAt: null, validSecrets: [] };
+  }
+
+  const validSecrets: string[] = [row.current];
+
+  if (row.prev && row.rotatedAt) {
+    const rotatedTime = new Date(row.rotatedAt).getTime();
+    const elapsed = now.getTime() - rotatedTime;
+    if (elapsed >= 0 && elapsed <= SECRET_ROTATION_GRACE_MS) {
+      validSecrets.push(row.prev);
+    }
+  }
+
+  return {
+    current: row.current,
+    prev: row.prev ?? null,
+    rotatedAt: row.rotatedAt ? new Date(row.rotatedAt) : null,
+    validSecrets,
+  };
+}
+
+/**
+ * Daily sweep maintenance: nulls runtimeIngestSecretPrev for projects whose
+ * rotation grace period has expired (older than 24h / graceCutoff).
+ */
+export async function purgeExpiredRuntimeSecrets(
+  graceCutoff: Date = new Date(Date.now() - SECRET_ROTATION_GRACE_MS),
+): Promise<number> {
+  const updated = await db
+    .update(projects)
+    .set({
+      runtimeIngestSecretPrev: null,
+    })
+    .where(
+      and(
+        isNotNull(projects.runtimeIngestSecretPrev),
+        isNotNull(projects.runtimeSecretRotatedAt),
+        lte(projects.runtimeSecretRotatedAt, graceCutoff),
+      ),
+    )
+    .returning({ id: projects.id });
+
+  return updated.length;
 }
 
 /**

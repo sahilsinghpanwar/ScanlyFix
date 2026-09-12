@@ -145,5 +145,100 @@ describe('withGuard middleware', () => {
     await middleware(reqWithHost);
     expect(flushSpy).toHaveBeenCalledWith('live-shop-mu.vercel.app');
   });
+
+  // ── TASK 1: waitUntil Portability Tests ────────────────────────────────────
+  describe('waitUntil Portability & Fallback', () => {
+    it('accepts an explicit waitUntil executor in GuardOptions (e.g. Cloudflare ctx.waitUntil)', async () => {
+      const mockRuntime = createRuntime({
+        projectId: 'test-proj',
+        ingestUrl: 'http://localhost/api/runtime/ingest',
+      });
+      const flushPromise = Promise.resolve();
+      vi.spyOn(mockRuntime, 'report').mockImplementation(() => {});
+      vi.spyOn(mockRuntime, 'flush').mockReturnValue(flushPromise);
+
+      const customWaitUntil = vi.fn();
+      const middleware = withGuard(undefined, {
+        runtime: mockRuntime,
+        waitUntil: customWaitUntil,
+      });
+
+      const req = createMockRequest('/api/cloudflare-route');
+      await middleware(req);
+
+      expect(customWaitUntil).toHaveBeenCalledWith(flushPromise);
+    });
+
+    it('self-hosted Node fallback: when no waitUntil executor is available, cleanly falls back to void runtime.flush()', async () => {
+      const mockRuntime = createRuntime({
+        projectId: 'test-proj',
+        ingestUrl: 'http://localhost/api/runtime/ingest',
+      });
+      const flushSpy = vi.spyOn(mockRuntime, 'flush').mockResolvedValue();
+      vi.spyOn(mockRuntime, 'report').mockImplementation(() => {});
+
+      // Running on self-hosted Node: no options.waitUntil, event has no waitUntil, @vercel/functions is absent
+      const middleware = withGuard(undefined, { runtime: mockRuntime });
+      const req = createMockRequest('/api/self-hosted-route');
+
+      // Second argument (event) is undefined, as typical in self-hosted Node custom servers
+      const res = await middleware(req, undefined);
+
+      expect(res).toBeDefined();
+      expect(res.headers.get('x-middleware-next')).toBe('1');
+      expect(flushSpy).toHaveBeenCalled();
+    });
+
+    it('never throws even if the waitUntil executor throws (e.g. called outside request scope)', async () => {
+      const mockRuntime = createRuntime({
+        projectId: 'test-proj',
+        ingestUrl: 'http://localhost/api/runtime/ingest',
+      });
+      vi.spyOn(mockRuntime, 'flush').mockResolvedValue();
+      vi.spyOn(mockRuntime, 'report').mockImplementation(() => {});
+
+      const throwingWaitUntil = vi.fn().mockImplementation(() => {
+        throw new Error('waitUntil can only be called while handling a request');
+      });
+
+      const middleware = withGuard(undefined, {
+        runtime: mockRuntime,
+        waitUntil: throwingWaitUntil,
+      });
+
+      const req = createMockRequest('/api/edge-error-route');
+
+      // Must not throw, must return valid NextResponse
+      const res = await middleware(req);
+      expect(res).toBeDefined();
+      expect(res.headers.get('x-middleware-next')).toBe('1');
+      expect(throwingWaitUntil).toHaveBeenCalled();
+    });
+
+    it('prefers options.waitUntil over event.waitUntil if both are supplied', async () => {
+      const mockRuntime = createRuntime({
+        projectId: 'test-proj',
+        ingestUrl: 'http://localhost/api/runtime/ingest',
+      });
+      const flushPromise = Promise.resolve();
+      vi.spyOn(mockRuntime, 'flush').mockReturnValue(flushPromise);
+      vi.spyOn(mockRuntime, 'report').mockImplementation(() => {});
+
+      const optionsWaitUntil = vi.fn();
+      const eventWaitUntil = vi.fn();
+
+      const middleware = withGuard(undefined, {
+        runtime: mockRuntime,
+        waitUntil: optionsWaitUntil,
+      });
+
+      const req = createMockRequest('/api/precedence-route');
+      await middleware(req, { waitUntil: eventWaitUntil });
+
+      expect(optionsWaitUntil).toHaveBeenCalledWith(flushPromise);
+      expect(eventWaitUntil).not.toHaveBeenCalled();
+    });
+  });
 });
+
 

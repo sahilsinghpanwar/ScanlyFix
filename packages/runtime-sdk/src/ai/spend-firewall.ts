@@ -87,25 +87,82 @@ export class SpendCeilingError extends Error {
 export type SpendFirewallOptions = {
   projectId: string;
   store: SpendStore;
-  /** Hourly ceiling USD. 0/undefined = off. */
+  /** Hourly ceiling USD (e.g. from local env var). Takes precedence if set. 0/undefined = off. */
   ceilingUsdPerHour?: number;
   /** Store failures yahan — call FAIL-OPEN hoti hai. */
   onError?: (error: unknown) => void;
+  /** Optional dynamic config fetcher (e.g. from GET /api/runtime/config). Refreshes every 5m. */
+  configFetcher?: () => Promise<{ ceilingUsdPerHour?: number | null } | null | undefined>;
+  /** Refresh interval in milliseconds (defaults to 5 minutes: 300,000 ms). */
+  refreshIntervalMs?: number;
 };
 
 export class SpendFirewall {
-  constructor(private readonly opts: SpendFirewallOptions) {}
+  private remoteCeilingUsdPerHour: number | null = null;
+  private lastFetchAt = 0;
+  private isFetching = false;
+  private readonly refreshIntervalMs: number;
+
+  constructor(private readonly opts: SpendFirewallOptions) {
+    this.refreshIntervalMs = opts.refreshIntervalMs ?? 5 * 60 * 1000;
+    if (this.opts.configFetcher) {
+      void this.refreshConfig();
+    }
+  }
+
+  /**
+   * Refreshes the ceiling configuration from the remote fetcher.
+   * On fetch failure: keeps the last known ceiling and passes error to onError.
+   */
+  async refreshConfig(): Promise<void> {
+    if (!this.opts.configFetcher || this.isFetching) return;
+    this.isFetching = true;
+    try {
+      const res = await this.opts.configFetcher();
+      if (res && typeof res.ceilingUsdPerHour === 'number' && res.ceilingUsdPerHour > 0) {
+        this.remoteCeilingUsdPerHour = res.ceilingUsdPerHour;
+      } else if (res && (res.ceilingUsdPerHour === null || res.ceilingUsdPerHour === 0)) {
+        this.remoteCeilingUsdPerHour = null;
+      }
+      this.lastFetchAt = Date.now();
+    } catch (err) {
+      this.opts.onError?.(err);
+      // Fail-safe: keep last known ceiling (or disabled if never fetched)
+      this.lastFetchAt = Date.now();
+    } finally {
+      this.isFetching = false;
+    }
+  }
+
+  /**
+   * Effective ceiling in USD/hour.
+   * Env var ceiling (opts.ceilingUsdPerHour) takes precedence over remote config.
+   */
+  get effectiveCeilingUsdPerHour(): number {
+    if (this.opts.ceilingUsdPerHour != null && this.opts.ceilingUsdPerHour > 0) {
+      return this.opts.ceilingUsdPerHour;
+    }
+    return this.remoteCeilingUsdPerHour ?? 0;
+  }
 
   get enabled(): boolean {
-    return (this.opts.ceilingUsdPerHour ?? 0) > 0;
+    return this.effectiveCeilingUsdPerHour > 0;
   }
 
   private get ceilingMicroUsd(): number {
-    return Math.round((this.opts.ceilingUsdPerHour ?? 0) * 1_000_000);
+    return Math.round(this.effectiveCeilingUsdPerHour * 1_000_000);
+  }
+
+  /** Triggers background refresh if 5 minutes have elapsed since last fetch. */
+  private maybeRefresh(): void {
+    if (this.opts.configFetcher && Date.now() - this.lastFetchAt >= this.refreshIntervalMs) {
+      void this.refreshConfig(); // fire-and-forget
+    }
   }
 
   /** Reserve-then-throw. Store failure → silent pass (fail-open) + onError. */
   async check(attemptedMicroUsd: number): Promise<void> {
+    this.maybeRefresh();
     if (!this.enabled || attemptedMicroUsd <= 0) return;
     try {
       const total = await this.opts.store.addMicroUsd(hourKey(this.opts.projectId), attemptedMicroUsd);
@@ -121,6 +178,7 @@ export class SpendFirewall {
 
   /** Provider fail → reservation wapas. */
   async refund(attemptedMicroUsd: number): Promise<void> {
+    this.maybeRefresh();
     if (!this.enabled || attemptedMicroUsd <= 0) return;
     try {
       await this.opts.store.refundMicroUsd(hourKey(this.opts.projectId), attemptedMicroUsd);
@@ -128,4 +186,44 @@ export class SpendFirewall {
       this.opts.onError?.(e);
     }
   }
+}
+
+export type RemoteConfigFetcherOptions = {
+  configUrl: string;
+  projectId: string;
+  signingSecret?: string;
+  host?: string;
+};
+
+/**
+ * Creates a standard configFetcher for SpendFirewall that calls /api/runtime/config.
+ */
+export function createRemoteConfigFetcher(
+  opts: RemoteConfigFetcherOptions,
+): () => Promise<{ ceilingUsdPerHour: number | null }> {
+  return async () => {
+    const headers: Record<string, string> = {
+      'x-runtime-project-id': opts.projectId,
+      'x-runtime-timestamp': String(Date.now()),
+    };
+    if (opts.signingSecret) {
+      headers['x-runtime-signature'] = opts.signingSecret;
+    }
+    if (opts.host) {
+      headers['x-runtime-host'] = opts.host;
+    }
+
+    const res = await fetch(opts.configUrl, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(5_000),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to fetch runtime config: ${res.status}`);
+    }
+
+    const data = (await res.json()) as { ceilingUsdPerHour?: number | null };
+    return { ceilingUsdPerHour: data.ceilingUsdPerHour ?? null };
+  };
 }

@@ -1,4 +1,4 @@
-export { withGuard, type GuardOptions } from './guard/middleware.ts';
+export { withGuard, type GuardOptions, type WaitUntilExecutor } from './guard/middleware.ts';
 export { normalizePathname } from './guard/normalize.ts';
 export { buildRouteEvent, type RequestSnapshot, type RouteEvent } from './guard/observe.ts';
 export { hasSessionCookie, DEFAULT_SESSION_COOKIE_PATTERNS, type SessionDetectionOptions } from './guard/session.ts';
@@ -11,9 +11,11 @@ export {
   SpendCeilingError,
   MemorySpendStore,
   createUpstashStore,
+  createRemoteConfigFetcher,
   hourKey,
   type SpendStore,
   type SpendFirewallOptions,
+  type RemoteConfigFetcherOptions,
 } from './ai/spend-firewall.ts';
 export {
   estimateCostMicroUsd,

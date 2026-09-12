@@ -71,6 +71,7 @@ export async function sendSampleAiCallAction(
           latencyMs,
           costMicroUsd,
           userHash: 'usr_' + viewer.userId.slice(0, 8),
+          source: 'sample',
         },
       ]);
     } else {
@@ -89,6 +90,7 @@ export async function sendSampleAiCallAction(
           latencyMs: Math.floor(Math.random() * 200) + 250,
           costMicroUsd: estimateCostMicroUsd('gpt-4o-mini', p1, c1),
           userHash: 'usr_' + viewer.userId.slice(0, 8),
+          source: 'sample',
         },
         {
           provider: 'anthropic',
@@ -98,6 +100,7 @@ export async function sendSampleAiCallAction(
           latencyMs: Math.floor(Math.random() * 400) + 600,
           costMicroUsd: estimateCostMicroUsd('claude-3-5-sonnet', p2, c2),
           userHash: 'usr_' + viewer.userId.slice(0, 8),
+          source: 'sample',
         },
       ]);
     }

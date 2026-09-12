@@ -147,6 +147,25 @@ export default async function RuntimePage({
                 Nightly logged-out prober monitors sensitive routes. Flags pages that previously required login
                 (401/403/30x) but now respond with 200 OK.
               </p>
+              <div className="mt-3 flex items-center gap-2 text-xs">
+                {ctx?.anonKeyFingerprint ? (
+                  <span className="inline-flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
+                    Public Supabase anon key detected (fingerprint:{' '}
+                    <code className="font-mono">{ctx.anonKeyFingerprint}</code>) — anon-role probe active
+                  </span>
+                ) : ctx?.anonKeyCheckedAt ? (
+                  <span className="inline-flex items-center gap-1.5 text-c-muted">
+                    <span className="h-1.5 w-1.5 rounded-full bg-c-line" />
+                    No public Supabase anon key detected on homepage (bare logged-out probing active)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-c-muted">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Anon-key detection pending next probe run
+                  </span>
+                )}
+              </div>
             </div>
             <div className="shrink-0 pt-2 sm:pt-0">
               <ProberControls projectId={projectId} hasBaseline={hasBaseline} targetCount={targets.length} />
@@ -168,7 +187,13 @@ export default async function RuntimePage({
             </div>
           </div>
 
-          <TargetManager projectId={projectId} targets={targets} />
+          <TargetManager projectId={projectId} targets={targets} findings={findings} />
+
+          <p className="mt-4 border-t border-c-line/60 pt-3 text-[11px] text-c-muted">
+            * Note on dynamic routes: parameter placeholders (e.g. <code className="font-mono">[id]</code>,{' '}
+            <code className="font-mono">[slug]</code>) are probed with safe test values. Dynamic routes whose substituted ID
+            does not exist on your server return 404 (inconclusive) and produce no finding. This is by design to prevent false alarms.
+          </p>
         </section>
       </div>
     </div>

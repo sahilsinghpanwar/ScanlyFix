@@ -7,6 +7,7 @@ export type CallRow = {
   latencyMs: number | null;
   costMicroUsd: number | null;
   userHash: string | null;
+  source?: string | null;
   createdAt: Date;
 };
 
@@ -39,16 +40,18 @@ export function buildAiSummary(input: {
   byModel: Array<{ model: string; calls: number; costMicroUsd: number }>;
   byUser: Array<{ userHash: string | null; calls: number; costMicroUsd: number }>;
 }): AiSummary {
-  const totalCost = input.calls.reduce((s, c) => s + (c.costMicroUsd ?? 0), 0);
+  // Exclude simulated sample calls from spend and token rollups
+  const nonSampleCalls = input.calls.filter((c) => c.source !== 'sample');
+  const totalCost = nonSampleCalls.reduce((s, c) => s + (c.costMicroUsd ?? 0), 0);
   const users = input.byUser.filter(
     (u): u is { userHash: string; calls: number; costMicroUsd: number } => u.userHash !== null,
   );
   const top = users[0];
   return {
-    totalCalls: input.calls.length,
+    totalCalls: nonSampleCalls.length,
     totalCostMicroUsd: totalCost,
-    totalTokensIn: input.calls.reduce((s, c) => s + c.promptTokens, 0),
-    totalTokensOut: input.calls.reduce((s, c) => s + c.completionTokens, 0),
+    totalTokensIn: nonSampleCalls.reduce((s, c) => s + c.promptTokens, 0),
+    totalTokensOut: nonSampleCalls.reduce((s, c) => s + c.completionTokens, 0),
     byModel: input.byModel,
     byUser: users,
     topUserSharePct: top && totalCost > 0 ? Math.round((top.costMicroUsd / totalCost) * 100) : null,

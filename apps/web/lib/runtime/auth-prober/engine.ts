@@ -12,18 +12,20 @@ import {
 } from '@scanlyfix/db';
 
 import { evaluateTarget, isProtectedStatus } from './classify';
-import { probeTarget } from './probe';
+import { probeTarget, probeTargetWithAnonKey } from './probe';
+import { getOrRefreshProjectAnonKey } from './anon-key';
 import { defaultTargetsForSeeding } from './targets';
 import {
   MAX_TARGETS_PER_PROJECT,
   PROBE_PARALLELISM,
+  type ProberFindingItem,
   type ProberRunSummary,
   type TargetVerdict,
 } from './types';
 
 export type EngineHooks = {
   /** Findings jab banein (sirf NAYE) — caller alerts bhejne ka faisla karega. */
-  onNewFindings?: (findings: Array<{ path: string; severity: string; baselineStatus: number; actualStatus: number }>) => Promise<void>;
+  onNewFindings?: (findings: ProberFindingItem[]) => Promise<void>;
 };
 
 /**
@@ -48,6 +50,9 @@ export async function runAuthProber(projectId: string, hooks: EngineHooks = {}):
   // Gates: bina domain verification ke probe = hathiyar ban sakta hai (CheckVibe wala rule).
   if (!project.isVerified) return summary;
 
+  // Supabase anon-key discovery / cache refresh (weekly)
+  const anonKeyInfo = await getOrRefreshProjectAnonKey(projectId, project.hostname);
+
   // Targets: pehli baar defaults seed karo, warna jo hai wahi.
   let targets = await listProberTargets(projectId);
   if (targets.length === 0) {
@@ -57,7 +62,7 @@ export async function runAuthProber(projectId: string, hooks: EngineHooks = {}):
   const bounded = targets.slice(0, MAX_TARGETS_PER_PROJECT);
 
   // Politeness: chhote chunks me parallel — 5 at a time, 50 targets max.
-  const newFindings: Array<{ path: string; severity: string; baselineStatus: number; actualStatus: number }> = [];
+  const newFindings: ProberFindingItem[] = [];
 
   for (let i = 0; i < bounded.length; i += PROBE_PARALLELISM) {
     const chunk = bounded.slice(i, i + PROBE_PARALLELISM);
@@ -89,11 +94,62 @@ export async function runAuthProber(projectId: string, hooks: EngineHooks = {}):
         case 'protected': {
           await recordCheck(target.id, verdict.status);
           summary.checked++;
-          // Pehle open tha, ab locked → purani finding khud resolve ho jaye.
-          const open = await findUnresolvedFinding(projectId, target.path, target.method);
-          if (open) {
-            await autoResolveFinding(open.id);
+          // Pehle open tha, ab locked → purani plain finding khud resolve ho jaye.
+          const openPlain = await findUnresolvedFinding(projectId, target.path, target.method, null);
+          if (openPlain) {
+            await autoResolveFinding(openPlain.id);
             summary.autoResolved++;
+          }
+
+          // Anon-key probe variant: ONLY when bare probe is protected AND an anon key exists
+          if (anonKeyInfo && target.baselineStatus !== null && isProtectedStatus(target.baselineStatus)) {
+            const anonOutcome = await probeTargetWithAnonKey(project.hostname, target.path, anonKeyInfo.key);
+            if (anonOutcome.ok) {
+              const anonVerdict = evaluateTarget({
+                path: target.path,
+                baseline: target.baselineStatus,
+                actual: outcome.status,
+                anonActual: anonOutcome.status,
+              });
+
+              if (anonVerdict.verdict === 'anon_open') {
+                const existingAnon = await findUnresolvedFinding(projectId, target.path, target.method, 'anon_role');
+                if (existingAnon) {
+                  await touchFinding(existingAnon.id); // duplicate alert nahi — same finding zinda hai
+                  summary.stillOpen++;
+                } else {
+                  const created = await insertFinding({
+                    projectId,
+                    targetId: target.id,
+                    path: target.path,
+                    method: target.method,
+                    baselineStatus: target.baselineStatus,
+                    actualStatus: anonVerdict.anonStatus,
+                    severity: anonVerdict.severity,
+                    variant: 'anon_role',
+                    keyFingerprint: anonKeyInfo.fingerprint,
+                  });
+                  if (created) {
+                    newFindings.push({
+                      path: created.path,
+                      severity: created.severity as any,
+                      baselineStatus: created.baselineStatus,
+                      actualStatus: created.actualStatus,
+                      variant: 'anon_role',
+                      keyFingerprint: anonKeyInfo.fingerprint,
+                    });
+                    summary.newFindings++;
+                  }
+                }
+              } else if (anonVerdict.verdict === 'protected') {
+                // Anon probe is also protected → auto-resolve past anon finding if any
+                const openAnon = await findUnresolvedFinding(projectId, target.path, target.method, 'anon_role');
+                if (openAnon) {
+                  await autoResolveFinding(openAnon.id);
+                  summary.autoResolved++;
+                }
+              }
+            }
           }
           break;
         }
@@ -104,7 +160,7 @@ export async function runAuthProber(projectId: string, hooks: EngineHooks = {}):
           if (target.baselineStatus !== null && verdict.status >= 200 && verdict.status < 300) {
             const baselineWasProtected = isProtectedStatus(target.baselineStatus);
             if (baselineWasProtected) {
-              const existing = await findUnresolvedFinding(projectId, target.path, target.method);
+              const existing = await findUnresolvedFinding(projectId, target.path, target.method, null);
               if (existing) {
                 await touchFinding(existing.id); // duplicate alert nahi — same finding zinda hai
                 summary.stillOpen++;
@@ -117,13 +173,17 @@ export async function runAuthProber(projectId: string, hooks: EngineHooks = {}):
                   baselineStatus: target.baselineStatus,
                   actualStatus: verdict.status,
                   severity: verdict.severity,
+                  variant: null,
+                  keyFingerprint: null,
                 });
                 if (created) {
                   newFindings.push({
                     path: created.path,
-                    severity: created.severity,
+                    severity: created.severity as any,
                     baselineStatus: created.baselineStatus,
                     actualStatus: created.actualStatus,
+                    variant: null,
+                    keyFingerprint: null,
                   });
                   summary.newFindings++;
                 }

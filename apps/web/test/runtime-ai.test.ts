@@ -6,7 +6,10 @@ import { buildAiSummary, formatUsd, projectEndOfHourMicroUsd } from '../lib/runt
 vi.mock('@scanlyfix/db', () => ({
   recordRouteEvents: vi.fn().mockResolvedValue(2),
   recordAiCallEvents: vi.fn().mockResolvedValue(2),
-  getProjectRuntimeSecret: vi.fn().mockResolvedValue(null),
+  getProjectRuntimeSecret: vi.fn().mockResolvedValue('test-secret-123'),
+  getProjectRuntimeAuthSecrets: vi.fn().mockResolvedValue({
+    validSecrets: ['test-secret-123'],
+  }),
   findProjectIdByHost: vi.fn().mockResolvedValue('proj-123'),
 }));
 
@@ -40,16 +43,24 @@ describe('AI Spend Velocity evaluation', () => {
     expect(verdict.shouldAlert).toBe(false);
   });
 
-  it('handles zero or null ceiling safely', () => {
-    const verdict = evaluateVelocity({
+  it('evaluates no-ceiling project against default $10/hour absolute threshold ($3 -> true, $0.50 -> false)', () => {
+    // 15 min window, $3.00 spent (3,000,000 micro-USD) -> $12.00/hour projected -> shouldAlert: true
+    const alertVerdict = evaluateVelocity({
+      windowMicroUsd: 3_000_000,
+      windowMinutes: 15,
+      ceilingMicroUsd: null,
+    });
+    expect(alertVerdict.projectedHourlyMicroUsd).toBe(12_000_000);
+    expect(alertVerdict.shouldAlert).toBe(true);
+
+    // 15 min window, $0.50 spent (500_000 micro-USD) -> $2.00/hour projected -> shouldAlert: false
+    const safeVerdict = evaluateVelocity({
       windowMicroUsd: 500_000,
       windowMinutes: 15,
       ceilingMicroUsd: null,
     });
-
-    expect(verdict.projectedHourlyMicroUsd).toBe(2_000_000);
-    expect(verdict.pctOfCeiling).toBeNull();
-    expect(verdict.shouldAlert).toBe(false);
+    expect(safeVerdict.projectedHourlyMicroUsd).toBe(2_000_000);
+    expect(safeVerdict.shouldAlert).toBe(false);
   });
 });
 
@@ -111,6 +122,42 @@ describe('AI Log Summary and Formatting', () => {
     // user-b had 7500 / 7545 = ~99% of total spend -> runaway loop signal
     expect(summary.topUserSharePct).toBeGreaterThanOrEqual(90);
   });
+
+  it('excludes source=sample calls from totalCost, totalCalls, and token counts in summary', () => {
+    const calls = [
+      {
+        model: 'gpt-4o-mini',
+        promptTokens: 100,
+        completionTokens: 50,
+        latencyMs: 300,
+        costMicroUsd: 45,
+        userHash: 'user-real',
+        source: null,
+        createdAt: new Date(),
+      },
+      {
+        model: 'gpt-4o',
+        promptTokens: 5000,
+        completionTokens: 2000,
+        latencyMs: 1500,
+        costMicroUsd: 35000,
+        userHash: 'usr_sample',
+        source: 'sample', // simulated sample call
+        createdAt: new Date(),
+      },
+    ];
+
+    const byModel = [{ model: 'gpt-4o-mini', calls: 1, costMicroUsd: 45 }];
+    const byUser = [{ userHash: 'user-real', calls: 1, costMicroUsd: 45 }];
+
+    const summary = buildAiSummary({ calls, byModel, byUser });
+
+    // The sample call ($0.035) should NOT be counted in totalCalls, totalCost, or token sums
+    expect(summary.totalCalls).toBe(1);
+    expect(summary.totalCostMicroUsd).toBe(45);
+    expect(summary.totalTokensIn).toBe(100);
+    expect(summary.totalTokensOut).toBe(50);
+  });
 });
 
 describe('Runtime Ingest Route with AI events', () => {
@@ -120,7 +167,10 @@ describe('Runtime Ingest Route with AI events', () => {
 
     const req = new Request('http://localhost:3000/api/runtime/ingest?projectId=proj-123', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-runtime-signature': 'test-secret-123',
+      },
       body: JSON.stringify({
         events: [
           { pattern: '/api/checkout', method: 'POST', hasSession: true },
@@ -171,5 +221,42 @@ describe('Runtime Ingest Route with AI events', () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toBe('missing_project_id');
+  });
+});
+
+describe('SpendHourlyChart layout helper', () => {
+  it('computes 24-hour spend bar chart layout, scaling, and tooltips correctly', async () => {
+    const { computeHourlyChartLayout, formatHourlyTooltip } = await import(
+      '../lib/runtime/ai-spend/chart.ts'
+    );
+    const buckets = Array.from({ length: 24 }, (_, i) => ({
+      hour: new Date(Date.now() - (23 - i) * 3600_000).toISOString(),
+      timestamp: Date.now() - (23 - i) * 3600_000,
+      costMicroUsd: i === 12 ? 500_000 : 0,
+      calls: i === 12 ? 10 : 0,
+    }));
+
+    const layout = computeHourlyChartLayout(buckets);
+    expect(layout.bars).toHaveLength(24);
+    expect(layout.total24h).toBe(500_000);
+    expect(layout.totalCalls).toBe(10);
+    expect(layout.totalWidth).toBe(24 * (14 + 8));
+
+    // Non-zero bar at index 12
+    const activeBar = layout.bars[12]!;
+    expect(activeBar.costMicroUsd).toBe(500_000);
+    expect(activeBar.isZero).toBe(false);
+    expect(activeBar.height).toBeGreaterThan(1);
+    expect(activeBar.tooltip).toContain('$0.50 (10 calls)');
+
+    // Zero bar
+    const zeroBar = layout.bars[0]!;
+    expect(zeroBar.costMicroUsd).toBe(0);
+    expect(zeroBar.isZero).toBe(true);
+    expect(zeroBar.height).toBe(1);
+
+    // Tooltip helper
+    const tooltip = formatHourlyTooltip('14:00', 1_250_000, 5);
+    expect(tooltip).toBe('14:00 UTC: $1.25 (5 calls)');
   });
 });

@@ -68,6 +68,7 @@ export function createRuntime(config: RuntimeConfig): RuntimeClient {
             const headers: Record<string, string> = {
               'content-type': 'application/json',
             };
+            headers['x-runtime-timestamp'] = String(Date.now());
             if (config.projectId) {
               headers['x-runtime-project-id'] = config.projectId;
             }

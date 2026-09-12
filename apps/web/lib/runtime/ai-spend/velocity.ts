@@ -1,5 +1,9 @@
 /** PURE — live window se hourly velocity. Runaway loop MINUTES me pakda jata hai. */
 
+/** Default absolute velocity threshold for projects without a custom ceiling ($10.00 / hour). */
+export const DEFAULT_ABSOLUTE_THRESHOLD_USD = 10;
+export const DEFAULT_ABSOLUTE_THRESHOLD_MICRO_USD = DEFAULT_ABSOLUTE_THRESHOLD_USD * 1_000_000;
+
 export type VelocityInput = {
   windowMicroUsd: number;
   windowMinutes: number;
@@ -22,10 +26,18 @@ export function evaluateVelocity(input: VelocityInput): VelocityVerdict {
       shouldAlert: false,
     };
   }
+
   const projected = Math.round((input.windowMicroUsd / input.windowMinutes) * 60);
+
   if (input.ceilingMicroUsd === null || input.ceilingMicroUsd <= 0) {
-    return { projectedHourlyMicroUsd: projected, pctOfCeiling: null, shouldAlert: false };
+    // When no custom ceiling is configured, evaluate against the $10/hr default absolute threshold
+    return {
+      projectedHourlyMicroUsd: projected,
+      pctOfCeiling: null,
+      shouldAlert: projected >= DEFAULT_ABSOLUTE_THRESHOLD_MICRO_USD,
+    };
   }
+
   const pct = Math.round((projected / input.ceilingMicroUsd) * 100);
   return {
     projectedHourlyMicroUsd: projected,
