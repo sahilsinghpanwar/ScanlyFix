@@ -13,49 +13,53 @@ import { describe, expect, it } from 'vitest'
 import { toDays } from '../components/monitors/uptime-days.ts'
 
 const at = (iso: string, ok: boolean) => ({ ts: new Date(iso), ok })
+const NOW = new Date()
+const day = (offset: number) => {
+  const d = new Date(NOW)
+  d.setUTCDate(d.getUTCDate() + offset)
+  return d.toISOString().slice(0, 10)
+}
 
 describe('toDays', () => {
   it('groups by UTC day so the strip reads the same everywhere', () => {
     // Two events either side of local midnight in most zones, one UTC day.
-    const days = toDays([at('2026-08-24T01:00:00Z', true), at('2026-08-24T23:00:00Z', true)], 1)
-    expect(days[0]).toMatchObject({ date: '2026-08-24', ok: 2, failed: 0, state: 'ok' })
+    const days = toDays([at(`${day(0)}T01:00:00Z`, true), at(`${day(0)}T23:00:00Z`, true)], 1)
+    expect(days[0]).toMatchObject({ date: day(0), ok: 2, failed: 0, state: 'ok' })
   })
 
   it('counts successes and failures separately within a day', () => {
     const days = toDays(
       [
-        at('2026-08-24T01:00:00Z', true),
-        at('2026-08-24T02:00:00Z', false),
-        at('2026-08-24T03:00:00Z', false),
+        at(`${day(0)}T01:00:00Z`, true),
+        at(`${day(0)}T02:00:00Z`, false),
+        at(`${day(0)}T03:00:00Z`, false),
       ],
       1,
     )
-    expect(days[0]).toMatchObject({ date: '2026-08-24', ok: 1, failed: 2, state: 'down' })
+    expect(days[0]).toMatchObject({ date: day(0), ok: 1, failed: 2, state: 'down' })
   })
 
   it('returns days oldest-first, whatever order the events arrive in', () => {
     // The query hands them back newest-first; the strip reads left to right.
     const days = toDays(
-      [at('2026-08-24T00:00:00Z', true), at('2026-08-22T00:00:00Z', true)],
+      [at(`${day(0)}T00:00:00Z`, true), at(`${day(-2)}T00:00:00Z`, true)],
       5,
     )
     const active = days.filter((d) => d.ok + d.failed > 0).map((d) => d.date)
-    expect(active).toEqual(['2026-08-22', '2026-08-24'])
+    expect(active).toEqual([day(-2), day(0)])
   })
 
   it('keeps only the most recent window', () => {
     const events = Array.from({ length: 120 }, (_, i) =>
-      at(new Date(Date.UTC(2026, 0, 1 + i)).toISOString(), true),
+      at(`${day(-119 + i)}T00:00:00Z`, true),
     )
     const days = toDays(events, 90)
     expect(days).toHaveLength(90)
-    expect(days.at(-1)?.date).toBe('2026-04-30')
+    expect(days.at(-1)?.date).toBe(day(0))
   })
 
   it('accepts a serialized timestamp, which is what an API returns', () => {
-    expect(toDays([{ ts: '2026-08-24T10:00:00.000Z', ok: true }], 1)[0]?.date).toBe(
-      '2026-08-24',
-    )
+    expect(toDays([{ ts: `${day(0)}T10:00:00.000Z`, ok: true }], 1)[0]?.date).toBe(day(0))
   })
 
   it('returns a window of empty days when there are no events', () => {

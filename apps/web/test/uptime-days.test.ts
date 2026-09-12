@@ -24,6 +24,12 @@ import { formatDowntime, formatShortDate, summarize, toDays, type UptimeDay } fr
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 const at = (iso: string, ok: boolean) => ({ ts: new Date(iso), ok })
+const NOW = new Date()
+const day = (offset: number) => {
+  const d = new Date(NOW)
+  d.setUTCDate(d.getUTCDate() + offset)
+  return d.toISOString().slice(0, 10)
+}
 
 // ─── UTC day grouping ─────────────────────────────────────────────────────────
 
@@ -148,11 +154,11 @@ describe('toDays — windowing', () => {
 
   it('keeps only the most recent N days', () => {
     const events = Array.from({ length: 120 }, (_, i) =>
-      at(new Date(Date.UTC(2026, 0, 1 + i)).toISOString(), true),
+      at(`${day(-119 + i)}T00:00:00Z`, true),
     )
     const days = toDays(events, 90)
     expect(days).toHaveLength(90)
-    expect(days.at(-1)?.date).toBe('2026-04-30')
+    expect(days.at(-1)?.date).toBe(day(0))
   })
 
   it('defaults to 90 days', () => {
@@ -176,9 +182,9 @@ describe('toDays — windowing', () => {
 
 describe('toDays — serialized timestamps', () => {
   it('accepts ISO string timestamps', () => {
-    const days = toDays([{ ts: '2026-08-24T10:00:00.000Z', ok: true }], 1)
+    const days = toDays([{ ts: `${day(0)}T10:00:00.000Z`, ok: true }], 1)
     expect(days[0]).toEqual({
-      date: '2026-08-24',
+      date: day(0),
       state: 'ok',
       ok: 1,
       failed: 0,
@@ -187,15 +193,15 @@ describe('toDays — serialized timestamps', () => {
   })
 
   it('accepts Date objects', () => {
-    const days = toDays([{ ts: new Date('2026-08-24T10:00:00Z'), ok: true }], 1)
-    expect(days[0]?.date).toBe('2026-08-24')
+    const days = toDays([{ ts: new Date(`${day(0)}T10:00:00Z`), ok: true }], 1)
+    expect(days[0]?.date).toBe(day(0))
   })
 
   it('handles mixed Date and string timestamps', () => {
     const days = toDays(
       [
-        { ts: '2026-08-24T10:00:00Z', ok: true },
-        { ts: new Date('2026-08-24T11:00:00Z'), ok: true },
+        { ts: `${day(0)}T10:00:00Z`, ok: true },
+        { ts: new Date(`${day(0)}T11:00:00Z`), ok: true },
       ],
       1,
     )
@@ -224,9 +230,9 @@ describe('toDays — empty input', () => {
 
 describe('toDays — single event', () => {
   it('handles a single successful event', () => {
-    const days = toDays([at('2026-08-24T12:00:00Z', true)], 1)
+    const days = toDays([at(`${day(0)}T12:00:00Z`, true)], 1)
     expect(days[0]).toEqual({
-      date: '2026-08-24',
+      date: day(0),
       state: 'ok',
       ok: 1,
       failed: 0,
@@ -235,9 +241,9 @@ describe('toDays — single event', () => {
   })
 
   it('handles a single failed event', () => {
-    const days = toDays([at('2026-08-24T12:00:00Z', false)], 1)
+    const days = toDays([at(`${day(0)}T12:00:00Z`, false)], 1)
     expect(days[0]).toEqual({
-      date: '2026-08-24',
+      date: day(0),
       state: 'down',
       ok: 0,
       failed: 1,
@@ -251,25 +257,24 @@ describe('toDays — single event', () => {
 describe('toDays — multi-day sequences', () => {
   it('handles a week of mixed results', () => {
     const events = [
-      at('2026-08-20T10:00:00Z', true),
-      at('2026-08-21T10:00:00Z', false),
-      at('2026-08-22T10:00:00Z', true),
-      at('2026-08-23T10:00:00Z', true),
-      at('2026-08-24T10:00:00Z', false),
-      at('2026-08-25T10:00:00Z', true),
-      at('2026-08-26T10:00:00Z', true),
+      at(`${day(-6)}T10:00:00Z`, true),
+      at(`${day(-5)}T10:00:00Z`, false),
+      at(`${day(-4)}T10:00:00Z`, true),
+      at(`${day(-3)}T10:00:00Z`, true),
+      at(`${day(-2)}T10:00:00Z`, false),
+      at(`${day(-1)}T10:00:00Z`, true),
+      at(`${day(0)}T10:00:00Z`, true),
     ]
     const days = toDays(events, 7)
     expect(days).toHaveLength(7)
-    expect(days[0]?.date).toBe('2026-08-20')
-    expect(days[6]?.date).toBe('2026-08-26')
+    expect(days[0]?.date).toBe(day(-6))
+    expect(days[6]?.date).toBe(day(0))
   })
 
   it('keeps empty days visible in the window', () => {
     const events = [
-      at('2026-08-20T10:00:00Z', true),
-      // Aug 21-23: no events
-      at('2026-08-24T10:00:00Z', true),
+      at(`${day(-4)}T10:00:00Z`, true),
+      at(`${day(0)}T10:00:00Z`, true),
     ]
     const days = toDays(events, 5)
     expect(days).toHaveLength(5)

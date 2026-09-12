@@ -189,7 +189,7 @@ describe('PATCH /api/monitors/[id]/alert-preferences', () => {
       alertEmail: 'alerts@example.com',
     })
     expect(res.status).toBe(200)
-    expect(capturedConfig).toMatchObject({
+    expect((capturedConfig as { alertConfig: unknown }).alertConfig).toMatchObject({
       failStatusCodes: [500, 502],
       failuresBeforeAlert: 5,
       alertEmail: 'alerts@example.com',
@@ -215,7 +215,7 @@ describe('PATCH /api/monitors/[id]/alert-preferences', () => {
 
     const res = await patch({ failuresBeforeAlert: 2, alertEmail: '' })
     expect(res.status).toBe(200)
-    expect((capturedConfig as { alertEmail: unknown }).alertEmail).toBeNull()
+    expect((capturedConfig as { alertConfig?: { alertEmail?: unknown } }).alertConfig?.alertEmail).toBeNull()
   })
 
   it('returns 403 when the viewer does not own the project', async () => {
