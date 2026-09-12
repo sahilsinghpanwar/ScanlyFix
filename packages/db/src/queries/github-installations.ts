@@ -12,7 +12,7 @@
  * signed-in user).
  */
 
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, ne } from 'drizzle-orm'
 import { db } from '../client.ts'
 import {
   githubInstallations,
@@ -227,6 +227,28 @@ export async function getInstallationByGithubId(
     where: eq(githubInstallations.installationId, installationId),
   })
   return row ?? null
+}
+
+/**
+ * The product caps every account at ONE connected repository. This is the
+ * enforcement half; which single repo survives is chosen by the caller (the
+ * GitHub callback, via chooseConnectedRepo) — this query deletes every OTHER
+ * github_repos row across ALL of the user's installations, so a re-install
+ * under a new installation id can never resurrect a second repo.
+ *
+ * Deletion cascades to that repo's scans and findings. That is the cost of
+ * the cap and it is accepted deliberately: keeping orphaned scans for repos
+ * the account no longer connects would show data the grant no longer covers.
+ */
+export async function deleteOtherReposForUser(viewer: Viewer, keepRepoId: string): Promise<void> {
+  if (viewer.kind !== 'user') return
+  const installationIds = db
+    .select({ id: githubInstallations.id })
+    .from(githubInstallations)
+    .where(eq(githubInstallations.userId, viewer.userId))
+  await db
+    .delete(githubRepos)
+    .where(and(inArray(githubRepos.installationId, installationIds), ne(githubRepos.id, keepRepoId)))
 }
 
 /**

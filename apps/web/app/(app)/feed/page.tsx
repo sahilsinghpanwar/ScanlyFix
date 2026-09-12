@@ -9,9 +9,11 @@
 import Link from 'next/link'
 import { headers } from 'next/headers'
 import {
+  listConnectionsForViewer,
   listInstallationsForViewer,
   listReposForInstallation,
   listRepoScansForRepo,
+  type Connection,
   type GithubRepo,
   type RepoScan,
 } from '@scanlyfix/db'
@@ -22,6 +24,7 @@ import { PageHeader } from '@/components/console/page-header.tsx'
 import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 import { RepoScanButton } from '@/components/console/repo-scan-button.tsx'
+import { SupabaseConnections } from '@/components/console/supabase-connections.tsx'
 
 export const metadata = { title: 'Feed' }
 
@@ -61,6 +64,7 @@ export default async function FeedPage({
   const user = await requireUser('/feed')
   const viewer = await getViewer()
   const installations = await listInstallationsForViewer(viewer)
+  const supabaseConnections: Connection[] = await listConnectionsForViewer(viewer)
 
   // Fetch repos per installation to avoid the broken cross-table join
   const repoLists = await Promise.all(
@@ -139,6 +143,8 @@ export default async function FeedPage({
               <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-c-body">
                 Install the ScanlyFix GitHub App to scan your repositories for
                 secrets, vulnerable dependencies, and workflow misconfigurations.
+                The feed tracks one repository per account — the first one the
+                install grants stays connected on re-installs.
               </p>
               <a
                 href={githubUrl}
@@ -233,6 +239,16 @@ export default async function FeedPage({
               ))}
             </ul>
           )}
+        </section>
+
+        {/* Supabase connections — the Level-1 deep scan (publishable-key checks only) */}
+        <section data-reveal="">
+          <div data-reveal-item="" className="mb-4 flex items-end justify-between gap-4">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
+              Supabase projects
+            </h2>
+          </div>
+          <SupabaseConnections connections={supabaseConnections} />
         </section>
 
         {/* Installation list — when multiple installations exist */}
