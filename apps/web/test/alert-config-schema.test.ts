@@ -413,8 +413,8 @@ describe('edge cases', () => {
 // ─── failuresBeforeAlert ─────────────────────────────────────────────────────
 
 describe('AlertConfigSchema — failuresBeforeAlert', () => {
-  it('accepts 1, 2, 3, 4, 5', () => {
-    for (const value of [1, 2, 3, 4, 5]) {
+  it('accepts 1, 2, 3, 5', () => {
+    for (const value of [1, 2, 3, 5]) {
       const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: value })
       expect(result.success).toBe(true)
     }
@@ -423,6 +423,11 @@ describe('AlertConfigSchema — failuresBeforeAlert', () => {
   it('rejects 0 (must be >= 1)', () => {
     const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 0 })
     expect(result.success).toBe(false)
+  })
+
+  it('accepts 4', () => {
+    const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 4 })
+    expect(result.success).toBe(true)
   })
 
   it('rejects non-integers', () => {
