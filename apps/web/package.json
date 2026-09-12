@@ -18,6 +18,7 @@
     "@scanlyfix/checks": "workspace:*",
     "@scanlyfix/db": "workspace:*",
     "@scanlyfix/repo-checks": "workspace:*",
+    "@scanlyfix/runtime-sdk": "workspace:*",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.49.0",
     "@upstash/ratelimit": "^2.0.8",

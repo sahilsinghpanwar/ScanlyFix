@@ -33,12 +33,7 @@ export const runtime = 'nodejs'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const PatchSchema = z.object({
-  failuresBeforeAlert: z.union([
-    z.literal(1),
-    z.literal(2),
-    z.literal(3),
-    z.literal(5),
-  ]),
+  failuresBeforeAlert: z.number().int().min(1).max(5),
   alertEmail: z
     .string()
     .trim()
