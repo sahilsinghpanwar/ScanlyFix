@@ -33,7 +33,15 @@ export async function setCeilingAction(projectId: string, ceilingUsd: number): P
   }
 }
 
-export async function sendSampleAiCallAction(projectId: string): Promise<AiActionResult> {
+export async function sendSampleAiCallAction(
+  projectId: string,
+  custom?: {
+    model?: string;
+    provider?: string;
+    promptTokens?: number;
+    completionTokens?: number;
+  },
+): Promise<AiActionResult> {
   try {
     const viewer = await getViewer();
     if (viewer.kind !== 'user') return { ok: false, error: 'unauthorized' };
@@ -44,26 +52,55 @@ export async function sendSampleAiCallAction(projectId: string): Promise<AiActio
     const hasAccess = await hasRuntimeAccess(viewer, projectId);
     if (!hasAccess) return { ok: false, error: 'upgrade_required' };
 
-    await recordAiCallEvents(projectId, [
-      {
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        promptTokens: 420,
-        completionTokens: 180,
-        latencyMs: 320,
-        costMicroUsd: 171, // (420 * 0.15) + (180 * 0.6) = 63 + 108 = 171 micro USD ($0.000171)
-        userHash: 'usr_' + viewer.userId.slice(0, 8),
-      },
-      {
-        provider: 'anthropic',
-        model: 'claude-3-5-sonnet',
-        promptTokens: 850,
-        completionTokens: 320,
-        latencyMs: 840,
-        costMicroUsd: 7350, // (850 * 3.0) + (320 * 15.0) = 2550 + 4800 = 7350 micro USD ($0.00735)
-        userHash: 'usr_' + viewer.userId.slice(0, 8),
-      },
-    ]);
+    const { estimateCostMicroUsd } = await import('@scanlyfix/runtime-sdk');
+
+    if (custom?.model) {
+      const model = custom.model;
+      const provider = custom.provider || (model.startsWith('claude') ? 'anthropic' : 'openai');
+      const promptTokens = Math.max(10, custom.promptTokens || Math.floor(Math.random() * 800) + 200);
+      const completionTokens = Math.max(5, custom.completionTokens || Math.floor(Math.random() * 400) + 50);
+      const latencyMs = Math.floor(Math.random() * 600) + 200;
+      const costMicroUsd = estimateCostMicroUsd(model, promptTokens, completionTokens);
+
+      await recordAiCallEvents(projectId, [
+        {
+          provider,
+          model,
+          promptTokens,
+          completionTokens,
+          latencyMs,
+          costMicroUsd,
+          userHash: 'usr_' + viewer.userId.slice(0, 8),
+        },
+      ]);
+    } else {
+      // Realistic simulation batch with dynamic token count & latency
+      const p1 = Math.floor(Math.random() * 200) + 300;
+      const c1 = Math.floor(Math.random() * 150) + 80;
+      const p2 = Math.floor(Math.random() * 400) + 500;
+      const c2 = Math.floor(Math.random() * 250) + 150;
+
+      await recordAiCallEvents(projectId, [
+        {
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          promptTokens: p1,
+          completionTokens: c1,
+          latencyMs: Math.floor(Math.random() * 200) + 250,
+          costMicroUsd: estimateCostMicroUsd('gpt-4o-mini', p1, c1),
+          userHash: 'usr_' + viewer.userId.slice(0, 8),
+        },
+        {
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet',
+          promptTokens: p2,
+          completionTokens: c2,
+          latencyMs: Math.floor(Math.random() * 400) + 600,
+          costMicroUsd: estimateCostMicroUsd('claude-3-5-sonnet', p2, c2),
+          userHash: 'usr_' + viewer.userId.slice(0, 8),
+        },
+      ]);
+    }
 
     revalidatePath('/runtime/ai');
     revalidatePath('/runtime');

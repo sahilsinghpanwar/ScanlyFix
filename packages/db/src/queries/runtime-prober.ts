@@ -42,7 +42,13 @@ export async function getRuntimeProjectContext(projectId: string): Promise<Runti
 
 function safeHostname(raw: string): string {
   try {
-    return new URL(raw).hostname;
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(candidate);
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+      return parsed.host; // includes port if present, e.g. localhost:3000
+    }
+    return parsed.hostname;
   } catch {
     return '';
   }
@@ -58,6 +64,37 @@ export async function listProberTargets(projectId: string) {
     .from(runtimeProberTargets)
     .where(eq(runtimeProberTargets.projectId, projectId))
     .orderBy(runtimeProberTargets.path);
+}
+
+export async function addProberTarget(
+  projectId: string,
+  path: string,
+  method: string = 'GET',
+  source: 'default' | 'guard' | 'manual' = 'manual',
+) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const [row] = await db
+    .insert(runtimeProberTargets)
+    .values({
+      projectId,
+      path: normalizedPath,
+      method: method.toUpperCase(),
+      source,
+    })
+    .onConflictDoUpdate({
+      target: [runtimeProberTargets.projectId, runtimeProberTargets.path, runtimeProberTargets.method],
+      set: { source },
+    })
+    .returning();
+  return row ?? null;
+}
+
+export async function deleteProberTarget(projectId: string, targetId: string): Promise<boolean> {
+  const deleted = await db
+    .delete(runtimeProberTargets)
+    .where(and(eq(runtimeProberTargets.projectId, projectId), eq(runtimeProberTargets.id, targetId)))
+    .returning({ id: runtimeProberTargets.id });
+  return deleted.length > 0;
 }
 
 export async function seedProberTargets(projectId: string, targets: NewProberTarget[]): Promise<void> {
@@ -185,22 +222,32 @@ export async function getProjectOwnerEmail(projectId: string): Promise<string | 
 /**
  * source upgrade: 'default' (guess) → 'guard' (real data).
  * 'manual' user-ki-choice hai — kabhi overwrite nahi hota.
+ *
+ * Uses a single bulk UPDATE with an inline VALUES list instead of N individual
+ * UPDATE statements — regardless of how many routes are synced, this is always
+ * ONE DB round-trip.
  */
 export async function upgradeProberTargetSource(
   projectId: string,
   targets: ReadonlyArray<{ path: string; method: string }>,
 ): Promise<void> {
-  for (const t of targets) {
-    await db
-      .update(runtimeProberTargets)
-      .set({ source: 'guard' })
-      .where(
-        and(
-          eq(runtimeProberTargets.projectId, projectId),
-          eq(runtimeProberTargets.path, t.path),
-          eq(runtimeProberTargets.method, t.method),
-          eq(runtimeProberTargets.source, 'default'), // ⭐ sirf default ko chhoo kar guard banao
-        ),
-      );
-  }
+  if (targets.length === 0) return;
+
+  // Build a VALUES list: (path1, method1), (path2, method2), …
+  // Drizzle doesn't have a first-class "WHERE (a, b) IN (VALUES …)" API, so
+  // we use a raw sql tag. The values are interpolated via Drizzle's sql
+  // template, which parameterises them safely — no string concatenation.
+  const pairs = targets.map((t) => sql`(${t.path}, ${t.method})`);
+  const valuesList = sql.join(pairs, sql`, `);
+
+  await db
+    .update(runtimeProberTargets)
+    .set({ source: 'guard' })
+    .where(
+      and(
+        eq(runtimeProberTargets.projectId, projectId),
+        eq(runtimeProberTargets.source, 'default'), // never overwrite 'manual'
+        sql`(${runtimeProberTargets.path}, ${runtimeProberTargets.method}) IN (${valuesList})`,
+      ),
+    );
 }

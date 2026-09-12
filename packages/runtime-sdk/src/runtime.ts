@@ -14,7 +14,10 @@ export type AiCallEvent = {
 export type RuntimeEvent = RouteEvent | AiCallEvent;
 
 export interface RuntimeConfig {
-  projectId: string;
+  /** Project UUID. If omitted, ScanlyFix automatically identifies the project from x-runtime-host */
+  projectId?: string;
+  /** Optional fallback host domain for auto-detection */
+  host?: string;
   signingSecret?: string;
   ingestUrl: string;
   maxBatchSize?: number;
@@ -25,7 +28,7 @@ export interface RuntimeConfig {
 export interface RuntimeClient {
   config: RuntimeConfig;
   report: (event: RuntimeEvent) => void;
-  flush: () => Promise<void>;
+  flush: (requestHost?: string) => Promise<void>;
 }
 
 export function createRuntime(config: RuntimeConfig): RuntimeClient {
@@ -33,7 +36,7 @@ export function createRuntime(config: RuntimeConfig): RuntimeClient {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let activeFlush: Promise<void> | null = null;
 
-  function flush(): Promise<void> {
+  function flush(requestHost?: string): Promise<void> {
     if (timer) {
       clearTimeout(timer);
       timer = null;
@@ -42,12 +45,13 @@ export function createRuntime(config: RuntimeConfig): RuntimeClient {
     if (activeFlush) {
       return activeFlush.then(() => {
         if (queue.length > 0) {
-          return flush();
+          return flush(requestHost);
         }
       });
     }
 
-    if (queue.length === 0 || !config.ingestUrl) {
+    const effectiveHost = requestHost ?? config.host;
+    if (queue.length === 0 || !config.ingestUrl || (!config.projectId && !effectiveHost)) {
       return Promise.resolve();
     }
 
@@ -57,11 +61,19 @@ export function createRuntime(config: RuntimeConfig): RuntimeClient {
           const batch = queue.splice(0, config.maxBatchSize ?? 50);
           if (batch.length === 0) break;
 
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 5_000);
+
           try {
             const headers: Record<string, string> = {
               'content-type': 'application/json',
-              'x-runtime-project-id': config.projectId,
             };
+            if (config.projectId) {
+              headers['x-runtime-project-id'] = config.projectId;
+            }
+            if (effectiveHost) {
+              headers['x-runtime-host'] = effectiveHost;
+            }
             if (config.signingSecret) {
               headers['x-runtime-signature'] = config.signingSecret;
             }
@@ -70,9 +82,13 @@ export function createRuntime(config: RuntimeConfig): RuntimeClient {
               method: 'POST',
               headers,
               body: JSON.stringify({ events: batch }),
+              signal: controller.signal,
+              keepalive: true,
             });
           } catch (err) {
             config.onError?.(err);
+          } finally {
+            clearTimeout(timer);
           }
         }
       } finally {

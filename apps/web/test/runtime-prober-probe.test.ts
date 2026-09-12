@@ -37,6 +37,12 @@ describe('runtime auth prober — probeTarget & SSRF guard', () => {
       (process.env as Record<string, string | undefined>).NODE_ENV = 'development';
       expect(buildProbeUrl('localhost', '/dashboard')).toBe('http://localhost/dashboard');
       expect(buildProbeUrl('127.0.0.1', '/dashboard')).toBe('http://127.0.0.1/dashboard');
+      expect(buildProbeUrl('localhost:3000', '/dashboard')).toBe('http://localhost:3000/dashboard');
+    });
+
+    it('sanitizes parameterized route patterns like [id] into concrete test paths', () => {
+      expect(buildProbeUrl('example.com', '/api/users/[id]')).toBe('https://example.com/api/users/1');
+      expect(buildProbeUrl('example.com', '/api/verify/[token]')).toBe('https://example.com/api/verify/test');
     });
   });
 

@@ -71,13 +71,15 @@ export function AiConsole(props: {
                 <h3 className="text-sm font-semibold text-c-ink">Recent AI Calls ({props.calls.length})</h3>
                 <p className="text-xs text-c-muted">Latest calls observed via SDK wrappers — metadata only</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowSetup((v) => !v)}
-                className="self-start rounded-lg border border-c-line bg-c-soft px-3 py-1.5 text-xs font-medium text-c-ink transition-colors hover:bg-c-line sm:self-auto"
-              >
-                {showSetup ? 'Hide Integration Snippets' : 'View Integration Snippets'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSetup((v) => !v)}
+                  className="self-start rounded-lg border border-c-line bg-c-soft px-3 py-1.5 text-xs font-medium text-c-ink transition-colors hover:bg-c-line sm:self-auto"
+                >
+                  {showSetup ? 'Hide Integration Snippets' : 'View Integration Snippets'}
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
@@ -313,19 +315,17 @@ export const anthropic = wrapAnthropic(new Anthropic(), {
             </p>
           </div>
 
-          {!hasCalls && (
-            <div className="flex flex-col items-start sm:items-end gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleSendTest}
-                disabled={sending}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-c-accent px-4 py-2 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
-                {sending ? 'Sending test...' : '⚡ Send Test Event'}
-              </button>
-              {sentMsg && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">{sentMsg}</span>}
-            </div>
-          )}
+          <div className="flex flex-col items-start sm:items-end gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleSendTest}
+              disabled={sending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-c-accent px-4 py-2 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {sending ? 'Sending test...' : hasCalls ? '⚡ Send Sample Telemetry' : '⚡ Send Test Event'}
+            </button>
+            {sentMsg && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">{sentMsg}</span>}
+          </div>
         </div>
 
         <div className="mt-4 flex items-center gap-2">

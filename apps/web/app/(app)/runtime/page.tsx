@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/console/page-header.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 import { ProberFindings } from '@/components/runtime/prober-findings.tsx'
 import { ProberControls } from './probers/prober-controls.tsx'
+import { TargetManager } from './probers/target-manager.tsx'
 
 export const metadata = { title: 'Runtime Auth Prober — ScanlyFix' }
 
@@ -167,7 +168,7 @@ export default async function RuntimePage({
             </div>
           </div>
 
-          <TargetsTable targets={targets} />
+          <TargetManager projectId={projectId} targets={targets} />
         </section>
       </div>
     </div>
@@ -226,71 +227,6 @@ function GateCard({
       >
         {cta.label}
       </Link>
-    </div>
-  )
-}
-
-function TargetsTable({ targets }: { targets: ProberTarget[] }) {
-  if (targets.length === 0) {
-    return (
-      <p className="py-6 text-center text-sm text-c-muted">
-        No targets configured yet. Run the prober to seed standard sensitive routes.
-      </p>
-    )
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-c-line text-xs font-medium uppercase tracking-wider text-c-muted">
-            <th className="py-3 pr-4">Path</th>
-            <th className="px-4 py-3">Method</th>
-            <th className="px-4 py-3">Baseline</th>
-            <th className="px-4 py-3">Latest Status</th>
-            <th className="px-4 py-3">Source</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-c-line">
-          {targets.map((t) => {
-            const isOk =
-              t.baselineStatus !== null &&
-              t.lastActualStatus !== null &&
-              t.lastActualStatus === t.baselineStatus
-            return (
-              <tr key={t.id} className="hover:bg-c-soft/50">
-                <td className="py-3 pr-4 font-mono text-xs font-semibold text-c-ink">{t.path}</td>
-                <td className="px-4 py-3 text-xs text-c-muted">{t.method}</td>
-                <td className="px-4 py-3 text-xs">
-                  {t.baselineStatus ? (
-                    <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-mono text-xs font-medium text-c-ink">
-                      {t.baselineStatus}
-                    </span>
-                  ) : (
-                    <span className="text-c-muted">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {t.lastActualStatus ? (
-                    <span
-                      className={`inline-flex items-center rounded px-2 py-0.5 font-mono text-xs font-medium ${
-                        isOk
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                          : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                      }`}
-                    >
-                      {t.lastActualStatus}
-                    </span>
-                  ) : (
-                    <span className="text-c-muted">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs text-c-muted">{t.source}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
     </div>
   )
 }

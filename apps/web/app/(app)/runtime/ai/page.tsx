@@ -123,8 +123,8 @@ export default async function AiConsolePage({
                 <h2 className="text-base font-semibold text-c-ink">{activeProject.name}</h2>
               </div>
               <p className="mt-1 text-sm text-c-muted">
-                Client wrapper — proxy nahi. Key aapki process me, request seedha provider ko,
-                humein sirf metadata. Spend usi calls se price hota hai — wahi numbers jo log dikhata hai.
+                Client wrapper — not a proxy. Your API keys stay in your process, requests go directly to
+                the provider, and only metadata is reported. Spend is calculated directly from your calls to match the exact numbers in your logs.
               </p>
             </div>
           </div>

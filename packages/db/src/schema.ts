@@ -266,7 +266,20 @@ export const projects = pgTable(
     brandColor: text('brand_color'),
     robotsIndexable: boolean('robots_indexable').notNull().default(true),
     runtimeSpendCeilingMicroUsd: bigint('runtime_spend_ceiling_micro_usd', { mode: 'number' }),
+    /**
+     * Per-project signing secret for the Runtime SDK ingest endpoint.
+     *
+     * The SDK sends this in `x-runtime-signature`; the ingest route validates
+     * it per-project using constant-time comparison. Each project gets its own
+     * secret so a leaked key for one project cannot poison another.
+     *
+     * Nullable — existing projects have null until the owner opens the Guard
+     * setup card, which calls getOrCreateRuntimeSecret() to generate one.
+     * Generate via: randomBytes(32).toString('hex')   → 64-char hex string.
+     */
+    runtimeSigningSecret: text('runtime_signing_secret'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+
   },
   (t) => [index('projects_owner_idx').on(t.ownerId), index('projects_org_idx').on(t.orgId)],
 )

@@ -7,7 +7,7 @@
  * convenience layer over it.
  */
 
-import { and, count, desc, eq, isNull } from 'drizzle-orm'
+import { and, count, desc, eq, isNull, sql } from 'drizzle-orm'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { db } from '../client.ts'
 import {
@@ -542,3 +542,164 @@ export async function revokeDomainVerification(projectId: string, viewer: Viewer
     .where(eq(projects.id, projectId))
   return true
 }
+
+/* -------------------------------------------------------------------------- */
+/* Runtime SDK signing secret                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Returns the project's Runtime signing secret, generating it on first call.
+ *
+ * Idempotent: if the secret already exists it is returned unchanged — visiting
+ * the Guard setup card multiple times does not rotate the secret. Only
+ * `rotateRuntimeSecret` changes it.
+ *
+ * Authorization: the caller MUST have already verified the viewer owns this
+ * project (e.g. via getProject). This function does NOT re-check — it takes
+ * a raw projectId so the ingest route can also call it without a Viewer.
+ */
+export async function getOrCreateRuntimeSecret(projectId: string): Promise<string> {
+  // Fast path: secret already set — return it immediately.
+  const [existing] = await db
+    .select({ s: projects.runtimeSigningSecret })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+
+  if (existing?.s) return existing.s
+
+  // Slow path: generate a 32-byte (64 hex char) secret and write it atomically.
+  // The UPDATE only touches rows where the column is still null — if two requests
+  // race, only one wins and the other gets the winning value from a re-read.
+  const secret = randomBytes(32).toString('hex')
+  const [updated] = await db
+    .update(projects)
+    .set({ runtimeSigningSecret: secret })
+    .where(and(eq(projects.id, projectId), isNull(projects.runtimeSigningSecret)))
+    .returning({ s: projects.runtimeSigningSecret })
+
+  if (updated?.s) return updated.s
+
+  // Someone else won the race — re-read and return their value.
+  const [reread] = await db
+    .select({ s: projects.runtimeSigningSecret })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+
+  return reread?.s ?? secret // should always have one by now
+}
+
+/**
+ * Rotates (regenerates) the Runtime signing secret for a project.
+ *
+ * Called by the "Regenerate" button in the Guard setup card. After rotation,
+ * any SDK instance still using the old secret will receive 401 from the ingest
+ * endpoint until the developer updates their env var and redeploys.
+ *
+ * Authorization: caller must verify viewer ownership before calling this.
+ */
+export async function rotateRuntimeSecret(projectId: string, viewer: Viewer): Promise<string | null> {
+  if (!(await getProject(projectId, viewer))) return null
+
+  const secret = randomBytes(32).toString('hex')
+  await db
+    .update(projects)
+    .set({ runtimeSigningSecret: secret })
+    .where(eq(projects.id, projectId))
+  return secret
+}
+
+/**
+ * Looks up a project's signing secret by projectId — used by the ingest
+ * endpoint to validate `x-runtime-signature` without requiring a Viewer
+ * (the request is not authenticated by session, only by the secret itself).
+ *
+ * Returns null when the project does not exist or has no secret yet.
+ */
+export async function getProjectRuntimeSecret(projectId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ s: projects.runtimeSigningSecret })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+  return row?.s ?? null
+}
+
+/**
+ * Normalizes a raw hostname / URL / origin into a clean lowercase domain for matching.
+ * Examples:
+ *   "https://live-shop-mu.vercel.app/" -> "live-shop-mu.vercel.app"
+ *   "http://localhost:3000" -> "localhost:3000"
+ *   "www.example.com:443" -> "example.com"
+ *   "mock-interview-seven-swart.vercel.app" -> "mock-interview-seven-swart.vercel.app"
+ */
+export function normalizeHost(rawHost: string): string {
+  let cleaned = rawHost.trim().toLowerCase();
+  if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) {
+    try {
+      cleaned = new URL(cleaned).host;
+    } catch {
+      cleaned = cleaned.replace(/^https?:\/\//, '');
+    }
+  }
+  cleaned = cleaned.split('/')[0] ?? cleaned;
+  cleaned = cleaned.replace(/:80$/, '').replace(/:443$/, '');
+  return cleaned.replace(/^www\./, '');
+}
+
+/**
+ * Dynamically resolves a project ID by looking up its registered URL or domain name.
+ * Enables zero-config Runtime Guard SDK where developers don't need to specify RUNTIME_PROJECT_ID.
+ */
+export async function findProjectIdByHost(rawHost: string): Promise<string | null> {
+  if (!rawHost || typeof rawHost !== 'string') return null;
+  const targetHost = normalizeHost(rawHost);
+  if (!targetHost) return null;
+
+  // Search candidate projects matching the target domain
+  const candidates = await db
+    .select({ id: projects.id, url: projects.url, name: projects.name })
+    .from(projects)
+    .where(
+      sql`${projects.url} ILIKE ${'%' + targetHost + '%'} OR ${projects.name} ILIKE ${'%' + targetHost + '%'}`
+    )
+    .orderBy(desc(projects.createdAt))
+    .limit(20);
+
+  if (candidates.length === 0) return null;
+
+  // 1. Exact normalized host match
+  for (const c of candidates) {
+    const candidateHost = normalizeHost(c.url);
+    if (candidateHost === targetHost) {
+      return c.id;
+    }
+  }
+
+  // 2. Fallback: match host ignoring port
+  const targetNoPort = targetHost.split(':')[0] ?? targetHost;
+  for (const c of candidates) {
+    const candidateNoPort = normalizeHost(c.url).split(':')[0];
+    if (candidateNoPort === targetNoPort) {
+      return c.id;
+    }
+  }
+
+  // 3. Fallback: match by project name
+  for (const c of candidates) {
+    const cleanName = c.name.trim().toLowerCase().replace(/^www\./, '');
+    if (cleanName === targetHost || cleanName === targetNoPort) {
+      return c.id;
+    }
+  }
+
+  // 4. Return the first candidate if single match
+  if (candidates.length === 1 && candidates[0]) {
+    return candidates[0].id;
+  }
+
+  return candidates[0]?.id ?? null;
+}
+
+
